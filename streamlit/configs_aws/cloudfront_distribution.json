@@ -1,0 +1,41 @@
+{
+  "CallerReference": "hdb-streamlit-cf-2026-07-29",
+  "Comment": "Custom domain for hdb-streamlit Express Mode service",
+  "Enabled": true,
+  "Aliases": {
+    "Quantity": 1,
+    "Items": ["hdb-streamlit-aws.murftech.dev"]
+  },
+  "Origins": {
+    "Quantity": 1,
+    "Items": [
+      {
+        "Id": "hdb-streamlit-origin",
+        "DomainName": "hd-90d6ed8ec9b042da92907afe8d93c481.ecs.ap-southeast-1.on.aws",
+        "CustomOriginConfig": {
+          "HTTPPort": 80,
+          "HTTPSPort": 443,
+          "OriginProtocolPolicy": "https-only",
+          "OriginSslProtocols": { "Quantity": 1, "Items": ["TLSv1.2"] }
+        }
+      }
+    ]
+  },
+  "DefaultCacheBehavior": {
+    "TargetOriginId": "hdb-streamlit-origin",
+    "ViewerProtocolPolicy": "redirect-to-https",
+    "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+    "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
+    "AllowedMethods": {
+      "Quantity": 7,
+      "Items": ["GET","HEAD","OPTIONS","PUT","PATCH","POST","DELETE"],
+      "CachedMethods": { "Quantity": 2, "Items": ["GET","HEAD"] }
+    },
+    "Compress": true
+  },
+  "ViewerCertificate": {
+    "ACMCertificateArn": "arn:aws:acm:us-east-1:717741926071:certificate/a6a9ec6f-0246-468b-8141-19e1d431aa5b",
+    "SSLSupportMethod": "sni-only",
+    "MinimumProtocolVersion": "TLSv1.2_2021"
+  }
+}

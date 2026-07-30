@@ -1,0 +1,39 @@
+
+from pathlib import Path
+
+
+### learn about __file__
+
+print('--- __file__ ---')
+print(__file__)
+print(type(__file__))
+
+print('--- Path(__file__) ---')
+path2 = Path(__file__)
+print(path2)
+print(type(path2))
+
+print('--- path2.resolve() ---')
+path3 = path2.resolve()
+print(path3)
+print(type(path3))
+
+print('--- path3.parent ---')
+path4 = path3.parent
+print(path4)
+print(type(path4))
+
+print('--- path4.parent ---')
+path5 = path4.parent
+print(path5)
+print(type(path5))
+
+print('--- REPO_ROOT_PATH = path5 ---')
+
+REPO_ROOT_PATH = path5
+print(REPO_ROOT_PATH)
+print(type(REPO_ROOT_PATH))
+
+HTML_PATH = REPO_ROOT_PATH / 'output' / '1-firstbq.html'
+
+# run this with python learn_about_pathlib.py

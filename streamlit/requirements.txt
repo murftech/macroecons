@@ -1,0 +1,5 @@
+streamlit
+google-cloud-storage
+google-cloud-run
+boto3
+docker

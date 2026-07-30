@@ -1,0 +1,13 @@
+venv/
+localdata/
+hive/
+output/
+tmp/
+.Rproj.user/
+__pycache__/
+*.pyc
+*.egg-info/
+.DS_Store
+*.R
+*.Rproj
+*.Rhistory

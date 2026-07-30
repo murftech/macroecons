@@ -1,0 +1,83 @@
+# ---------------------------------------------------------------------------
+# .gitignore — companion to git_init_push.sh
+#
+# This must be in place BEFORE the first `git add`. Once a file is committed it
+# lives in history forever; adding it here later stops future changes from being
+# tracked but does not remove it from the repo or from anyone's clone.
+#
+# To check what a pattern actually catches:   git check-ignore -v <path>
+# To see what would be committed:             git status --short
+# ---------------------------------------------------------------------------
+
+
+# --- Python ----------------------------------------------------------------
+# venv/ is the big one here: hundreds of MB, machine-specific, and rebuildable
+# from requirements. Never commit an environment; commit the recipe for it.
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+
+# --- R ---------------------------------------------------------------------
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+
+# --- Data and local artefacts ----------------------------------------------
+# Keep the repo about code. Data belongs in S3/GCS; git handles large binary
+# files badly (every version is stored in full, forever).
+localdata/
+hive/
+*.parquet
+*.csv.gz
+*.db
+*.sqlite3
+
+# Logs
+*.log
+streamlit.log
+
+
+# --- Secrets ---------------------------------------------------------------
+# Anything here in a public repo is compromised the moment it's pushed —
+# bots scrape new commits for keys within minutes. Rotate, don't just delete.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+service-account*.json
+gcp-*.json
+.aws/
+.gcloud/
+
+
+# --- Terraform -------------------------------------------------------------
+# State files contain resource IDs and often plaintext secrets; keep state in a
+# remote backend (S3/GCS), never in git. .terraform/ is a download cache.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+
+# --- Editors and OS --------------------------------------------------------
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~

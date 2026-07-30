@@ -1,0 +1,21 @@
+# invoked by ./deploy_streamlit.sh submit, from the repo root:
+#   gcloud builds submit --config=streamlit/cloudbuild.yaml --substitutions=_IMAGE_TAG=... .
+#
+# each build runs on a fresh VM with no local Docker cache, so without --cache-from every
+# build reinstalls streamlit from scratch. Pulling the previously-pushed image first and
+# passing it as --cache-from lets Docker reuse that layer whenever requirements.txt is
+# unchanged (see the COPY requirements.txt / RUN pip install ordering in streamlit/Dockerfile).
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - 'docker pull ${_IMAGE_TAG} || exit 0'
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'streamlit/Dockerfile', '--cache-from', '${_IMAGE_TAG}', '-t', '${_IMAGE_TAG}', '.']
+
+images:
+  - '${_IMAGE_TAG}'
+
+substitutions:
+  _IMAGE_TAG: 'hdb-streamlit:local'

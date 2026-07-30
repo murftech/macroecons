@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "ecs:RunTask",
+      "Resource": "arn:aws:ecs:ap-southeast-1:717741926071:task-definition/hdb-pipeline:*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::717741926071:role/hdb-pipeline-execution-role",
+        "arn:aws:iam::717741926071:role/hdb-pipeline-task-role"
+      ]
+    }
+  ]
+}

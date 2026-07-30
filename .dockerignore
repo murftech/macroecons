@@ -1,0 +1,25 @@
+# Ignore everything by default
+*
+# Allow traversal into these directories
+!/cloud_aws_shared/
+!/cloud_gcp_shared/
+!/hive/
+!/modules/pipe_hdb/
+!/streamlit
+
+
+# Allow everything inside them
+!/cloud_aws_shared/**
+!/cloud_gcp_shared/**
+!/hive/**
+!/modules/pipe_hdb/**
+!/streamlit/**
+
+# Allow these specific top-level files
+!/requirements.txt
+!/setup.sh
+!/*.sh
+!/.gitignore
+!/README.md
+
+.DS_Store

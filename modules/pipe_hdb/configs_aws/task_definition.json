@@ -1,0 +1,31 @@
+{
+  "family": "hdb-pipeline",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "runtimePlatform": {
+    "cpuArchitecture": "ARM64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::717741926071:role/hdb-pipeline-execution-role",
+  "taskRoleArn": "arn:aws:iam::717741926071:role/hdb-pipeline-task-role",
+  "containerDefinitions": [
+    {
+      "name": "hdb-pipeline",
+      "image": "IMAGE_TAG_PLACEHOLDER",
+      "environment": [
+        { "name": "S3_BUCKET", "value": "murftech-macroecons" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/hdb-pipeline",
+          "awslogs-region": "ap-southeast-1",
+          "awslogs-stream-prefix": "hdb-pipeline",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}

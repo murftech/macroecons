@@ -1,0 +1,12 @@
+services:
+  hdb-streamlit:
+    image: hdb-streamlit:local
+    container_name: hdb-streamlit
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      # required for streamlit hosted in container to talk to an external persisted folder
+      - "/Users/murftech/Library/CloudStorage/OneDrive-Personal/DBMaster/annotations/reports/macroecons/pipe_hdb:/Users/murftech/Library/CloudStorage/OneDrive-Personal/DBMaster/annotations/reports/macroecons/pipe_hdb:ro"
+      # required for streamlit to talk to another docker image pipe-hdb from inside its container
+      - "/var/run/docker.sock:/var/run/docker.sock"
