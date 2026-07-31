@@ -2,7 +2,7 @@
 set -e
 
 cd "$(dirname "$0")"
-while [ ! -d .vscode ] && [ "$PWD" != "/" ]; do cd ..; done
+while [ ! -d .git ] && [ "$PWD" != "/" ]; do cd ..; done
 
 # Avail fixed configs of the GCP project from a shared location
 source "cloud_gcp_shared/gcp_config.sh"

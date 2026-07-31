@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# .gitignore — companion to git_init_push.sh
+# modules — companion to git_init_push.sh
 #
 # This must be in place BEFORE the first `git add`. Once a file is committed it
 # lives in history forever; adding it here later stops future changes from being

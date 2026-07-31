@@ -4,7 +4,7 @@ set -e
 # forces cwd to the repo root regardless of where this script is invoked from - the
 # docker build context needs both streamlit/ and modules/pipe_hdb/ (siblings)
 cd "$(dirname "$0")"
-while [ ! -d .vscode ] && [ "$PWD" != "/" ]; do cd ..; done
+while [ ! -d .git ] && [ "$PWD" != "/" ]; do cd ..; done
 
 IMAGE=hdb-streamlit
 COMPOSE_FILE=streamlit/docker-compose.yml
