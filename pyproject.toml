@@ -1,7 +1,0 @@
-[project]
-name = "macroecons"
-version = "0.1"
-
-[tool.setuptools]
-packages = ["precode"]
-package-dir = {"" = "packages"}

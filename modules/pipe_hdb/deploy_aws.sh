@@ -2,7 +2,7 @@
 set -e
 
 cd "$(dirname "$0")"
-while [ ! -d .vscode ] && [ "$PWD" != "/" ]; do cd ..; done
+while [ ! -d .git ] && [ "$PWD" != "/" ]; do cd ..; done
 
 
 # Avail fixed configs of the AWS project from a shared location
@@ -75,7 +75,7 @@ main() {
     docker build -f modules/pipe_hdb/Dockerfile -t ${IMAGE}:local .
     # clean up the dangling image left behind by the previous build under this same tag
     docker image prune -f
-    docker tag ${IMAGE}:local-awsrdy ${REMOTE_TAG}
+    docker tag ${IMAGE}:local ${REMOTE_TAG}
     aws ecr get-login-password --region ${REGION} \
       | docker login \
       --username AWS \

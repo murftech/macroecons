@@ -32,16 +32,16 @@ if [ -d .git ]; then
 fi
 
 
-# --- 2. .gitignore ---------------------------------------------------------
-# .gitignore ships alongside this script and must be in place BEFORE the first
+# --- 2. modules ---------------------------------------------------------
+# modules ships alongside this script and must be in place BEFORE the first
 # `git add` — junk that enters the first commit stays in history forever.
-# Edit .gitignore, not this section, when the exclusions need to change.
-if [ ! -f .gitignore ]; then
-  echo "!!! No .gitignore found in $(pwd)."
+# Edit modules, not this section, when the exclusions need to change.
+if [ ! -f modules ]; then
+  echo "!!! No modules found in $(pwd)."
   echo "!!! It belongs next to this script. Copy it in, then re-run."
   exit 1
 fi
-echo "==> Using .gitignore ($(grep -cvE '^\s*(#|$)' .gitignore) active patterns)"
+echo "==> Using modules ($(grep -cvE '^\s*(#|$)' modules) active patterns)"
 
 
 # --- 3. Init and make the first commit -------------------------------------
@@ -55,7 +55,7 @@ git config user.name  "$GH_USER"
 git add -A
 
 # Sanity view BEFORE committing: anything here you didn't expect (venv, data,
-# credentials) means fix .gitignore and re-run `git add -A` rather than commit.
+# credentials) means fix modules and re-run `git add -A` rather than commit.
 echo "==> Files about to be committed (first 40):"
 git status --short | head -40
 echo "==> Total staged files: $(git diff --cached --name-only | wc -l | tr -d ' ')"
@@ -76,7 +76,7 @@ gh repo create "$GH_USER/$REPO_NAME" \
   --push
 
 # Option B — no gh: create the empty repo by hand at github.com/new
-# (no README, no .gitignore — it must be empty or the push will be rejected),
+# (no README, no modules — it must be empty or the push will be rejected),
 # then:
 #   git remote add origin git@github.com:$GH_USER/$REPO_NAME.git
 #   git push -u origin $DEFAULT_BRANCH

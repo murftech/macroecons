@@ -2,7 +2,7 @@
 set -e
 
 cd "$(dirname "$0")"
-while [ ! -d .vscode ] && [ "$PWD" != "/" ]; do cd ..; done
+while [ ! -d .git ] && [ "$PWD" != "/" ]; do cd ..; done
 
 # Avail fixed configs of the AWS project from a shared location
 source "cloud_aws_shared/aws_config.sh"

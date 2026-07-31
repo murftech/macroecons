@@ -2,7 +2,7 @@
 set -e
 
 cd "$(dirname "$0")"
-while [ ! -d .vscode ] && [ "$PWD" != "/" ]; do cd ..; done
+while [ ! -d .git ] && [ "$PWD" != "/" ]; do cd ..; done
 
 # Avail fixed configs of the GCP project from a shared location
 source "cloud_gcp_shared/gcp_config.sh"
@@ -20,7 +20,6 @@ usage() {
   echo "Usage: ./streamlit/deploy_gcp.sh [submit|deploy]"
   echo "  submit - build via Cloud Build and push to Artifact Registry"
   echo "  deploy - deploy the pushed image to Cloud Run"
-  echo "(local Docker Desktop build/up/down commands live in ./streamlit/deploy_docker.sh)"
   exit 1
 }
 
@@ -44,7 +43,7 @@ case "$1" in
       --image=${REMOTE_TAG} \
       --project=${GCP_PROJECT} \
       --region=${GCP_REGION} \
-      --allow-unauthenticated \
+      --allow-unauthenticated
     echo "Here:
       https://console.cloud.google.com/run/services?authuser=1&project=macroecons"
     ;;

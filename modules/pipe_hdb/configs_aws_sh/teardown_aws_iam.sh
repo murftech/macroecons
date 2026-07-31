@@ -2,7 +2,7 @@
 set -e
 
 cd "$(dirname "$0")"
-while [ ! -d .vscode ] && [ "$PWD" != "/" ]; do cd ..; done
+while [ ! -d .git ] && [ "$PWD" != "/" ]; do cd ..; done
 
 source "cloud_aws_shared/aws_config.sh"
 

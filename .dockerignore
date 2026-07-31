@@ -19,7 +19,7 @@
 !/requirements.txt
 !/setup.sh
 !/*.sh
-!/.gitignore
+!/modules
 !/README.md
 
 .DS_Store

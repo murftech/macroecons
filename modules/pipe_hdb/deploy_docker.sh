@@ -4,7 +4,7 @@ set -e
 # forces cwd to the repo root regardless of where this script is invoked from - the
 # docker build context needs the full repo, not just modules/pipe_hdb/
 cd "$(dirname "$0")"
-while [ ! -d .vscode ] && [ "$PWD" != "/" ]; do cd ..; done
+while [ ! -d .git ] && [ "$PWD" != "/" ]; do cd ..; done
 
 IMAGE=hdb-pipeline
 
