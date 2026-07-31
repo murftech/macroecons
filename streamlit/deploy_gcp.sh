@@ -20,7 +20,6 @@ usage() {
   echo "Usage: ./streamlit/deploy_gcp.sh [submit|deploy]"
   echo "  submit - build via Cloud Build and push to Artifact Registry"
   echo "  deploy - deploy the pushed image to Cloud Run"
-  echo "(local Docker Desktop build/up/down commands live in ./streamlit/deploy_docker.sh)"
   exit 1
 }
 
