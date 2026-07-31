@@ -44,7 +44,7 @@ case "$1" in
       --image=${REMOTE_TAG} \
       --project=${GCP_PROJECT} \
       --region=${GCP_REGION} \
-      --allow-unauthenticated \
+      --allow-unauthenticated
     echo "Here:
       https://console.cloud.google.com/run/services?authuser=1&project=macroecons"
     ;;
