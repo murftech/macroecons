@@ -28,7 +28,7 @@ def fetch_html_bytes(filename):
 #######################
 
 # copied into /app at Dockerfile build time, same as providers/gcp.py
-CODE_PATH = Path('modules/pipe_hdb/1_firstbq.py')
+CODE_PATH = Path('modules/pipe_hdb/2_report_firstbq.py')
 
 
 ########################

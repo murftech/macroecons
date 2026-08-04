@@ -41,7 +41,7 @@ def fetch_html_bytes(filename):
 ##### for show code snippet
 #######################
 # at dockerfile time, it was already synced copied exactly state
-CODE_PATH = Path('modules/pipe_hdb/1_firstbq.py')
+CODE_PATH = Path('modules/pipe_hdb/2_report_firstbq.py')
 
 
 ########################

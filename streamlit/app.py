@@ -132,11 +132,13 @@ def st_iframe(filename):
         st.iframe(content)
 
 
+# line ranges point into CODE_PATH (modules/pipe_hdb/2_report_firstbq.py) and have to be
+# re-checked whenever that file is edited - they are positional, nothing validates them
 st_iframe('1-firstbq-overlay.html')
-show_code_snippet(101, 123, key='code_snippet_overlay')
+show_code_snippet(70, 113, key='code_snippet_overlay')
 
 st_iframe('1-firstbq-facet.html')
-show_code_snippet(154, 173, key='code_snippet_facet')
+show_code_snippet(118, 150, key='code_snippet_facet')
 
 st_iframe('1-firstbq-fixedaxis.html')
 

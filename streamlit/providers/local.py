@@ -38,7 +38,7 @@ def fetch_html_bytes(filename):
 #########################
 
 # despite sitting under hive/, this is a single parquet file and not a partitioned
-# directory - 0_reference_point.py writes it with a plain write_parquet()
+# directory - 0_import_datagov.py writes it with a plain write_parquet()
 LOCAL_PARQUET_PATH = REPO_ROOT / 'hive/t2/datagovhdb'
 
 
@@ -58,7 +58,7 @@ def fetch_parquet_bytes():
 #######################
 
 # take the file in dev repo
-CODE_PATH = REPO_ROOT / 'modules/pipe_hdb/1_firstbq.py'
+CODE_PATH = REPO_ROOT / 'modules/pipe_hdb/2_report_firstbq.py'
 
 
 ########################
