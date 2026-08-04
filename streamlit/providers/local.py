@@ -6,6 +6,13 @@ from pathlib import Path
 import streamlit as st
 
 
+# repo root - used to find run_pipeline.py, the pipeline source, and the parquet.
+# this file lives at streamlit/providers/local.py, so up three levels to reach the repo root.
+# derived from __file__, not the working directory, so every path below resolves the same
+# whether streamlit is launched from the repo root or from streamlit/
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
 ########################
 #### for st_iframe (Charts from HTML)
 #########################
@@ -26,13 +33,29 @@ def fetch_html_bytes(filename):
     return filepath.read_text()
 
 
+########################
+#### for the interactive charts (the data itself, not pre-rendered HTML)
+#########################
+
+# despite sitting under hive/, this is a single parquet file and not a partitioned
+# directory - 0_reference_point.py writes it with a plain write_parquet()
+LOCAL_PARQUET_PATH = REPO_ROOT / 'hive/t2/datagovhdb'
+
+
+def fetch_parquet_bytes():
+    # hands back raw bytes rather than a DataFrame so polars stays out of the providers
+    # entirely - the aws/gcp versions will return bucket bytes in this same shape, and the
+    # one place that parses them can then be provider-agnostic
+    print(f'check LOCAL_PARQUET_PATH: {LOCAL_PARQUET_PATH}')
+    if not LOCAL_PARQUET_PATH.exists():
+        print('parquet for charts is missing, check about it')
+        return None
+    return LOCAL_PARQUET_PATH.read_bytes()
+
+
 #######################
 ##### for show code snippet
 #######################
-
-# repo root - used to find run_pipeline.py, and the pipeline source itself.
-# this file lives at streamlit/providers/local.py, so up three levels to reach the repo root
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # take the file in dev repo
 CODE_PATH = REPO_ROOT / 'modules/pipe_hdb/1_firstbq.py'
