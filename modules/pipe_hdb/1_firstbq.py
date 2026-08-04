@@ -50,7 +50,6 @@ bq_median = (
 
 
 import math
-import pandas as pd
 import plotly.express as px
 
 
@@ -62,16 +61,18 @@ import plotly.express as px
 plotter = bq_median.with_columns(
     (pl.col('median_price') / 1000).round(0) * 1000,
     ((pl.col('median_price') / 1000).round(0)).alias('median_price_k'),
-).to_pandas()
-
-plotter['flat_type'] = pd.Categorical(
-    plotter['flat_type'],
-    categories=['5 ROOM', '4 ROOM', '3 ROOM', '2 ROOM'],
-    ordered=True,
 )
-plotter = plotter.sort_values(['flat_type', 'tx_monthdate'])
 
-start_of_year_lines = plotter[plotter['tx_monthdate'].dt.month == 1]['tx_monthdate'].unique()
+# legend/facet order is declared per-figure via category_orders below instead of by
+# re-sorting the dataframe - which means plotter is no longer mutated between the two charts
+FLAT_TYPE_DESC = ['5 ROOM', '4 ROOM', '3 ROOM', '2 ROOM']
+FLAT_TYPE_ASC = ['2 ROOM', '3 ROOM', '4 ROOM', '5 ROOM']
+
+# polars' .unique() makes no ordering promise (pandas' preserved first-appearance order),
+# so sort explicitly rather than relying on whatever order comes back
+start_of_year_lines = (
+    plotter.filter(pl.col('tx_monthdate').dt.month() == 1)['tx_monthdate'].unique().sort()
+)
 
 ################################
 ######## overall chart #####
@@ -110,6 +111,8 @@ fig_overlay = px.line(
             'median_price': 'Median Price (SGD)',
             'flat_type': 'Flat Type'},
 
+    category_orders={'flat_type': FLAT_TYPE_DESC},
+
     template='plotly_dark',
 )
 
@@ -139,14 +142,6 @@ fig_overlay.update_yaxes(dtick=100000, range=[0, ceil_tick(plotter['median_price
 
 
 
-plotter['flat_type'] = pd.Categorical(
-    plotter['flat_type'],
-    categories=['2 ROOM', '3 ROOM', '4 ROOM', '5 ROOM'],
-    ordered=True,
-)
-
-plotter = plotter.sort_values(['flat_type', 'tx_monthdate'])
-
 fig_facet = px.line(
     plotter,
 
@@ -160,6 +155,7 @@ fig_facet = px.line(
     title='Median Resale Price individually by Flat Type, Year-Monthly',
 
     labels={'tx_monthdate': 'Monthly', 'median_price': 'Median Price (SGD)'},
+    category_orders={'flat_type': FLAT_TYPE_ASC},
     template='plotly_dark',
 
     facet_col_spacing=0.1,
