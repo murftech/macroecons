@@ -31,14 +31,26 @@ from polars import col
 # these reproduce exactly what 2_report_firstbq.py used to filter on inline, so calling
 # build_median() with no arguments gives the pre-existing charts unchanged
 DEFAULT_MAX_LEASE = 75
+# the source data bottoms out at 39 years remaining, so a floor of 0 excludes nothing and
+# leaves the pipeline's charts unchanged. the app can raise it to isolate a lease band
+DEFAULT_MIN_LEASE = 0
 DEFAULT_MIN_YEAR = 2019
-DEFAULT_FLAT_TYPES = ['2 ROOM', '3 ROOM', '4 ROOM', '5 ROOM']
+# the flat types this project charts, smallest to largest. drives both the ordering and
+# the app's picker options, so it is the single place to widen or narrow scope.
+#
+# the source data holds three more, all deliberately out of scope:
+#   1 ROOM (87 rows) and MULTI-GENERATION (88 rows) - too rare for a monthly median to
+#     mean anything; most months have zero or one sale
+#   EXECUTIVE (16,845 rows, 7% of the data) - not a data-quality problem but a different
+#     market segment from the standard flats this project is about
+#
+# they remain in the parquet untouched. filtering here rather than at import keeps the raw
+# data complete, so widening scope later is a one-line change and not a re-import
+FLAT_TYPE_ORDER = ['2 ROOM', '3 ROOM', '4 ROOM', '5 ROOM']
 
-# every flat_type present in the source data, smallest to largest. the pipeline only
-# charts the middle four, but the app lets the viewer pick any of them - so the canonical
-# ordering lives here rather than being spelled out at each call site
-FLAT_TYPE_ORDER = ['1 ROOM', '2 ROOM', '3 ROOM', '4 ROOM', '5 ROOM',
-                   'EXECUTIVE', 'MULTI-GENERATION']
+# every charted type is on by default - these coincide today, but the names mean different
+# things: FLAT_TYPE_ORDER is what may be picked, this is what starts picked
+DEFAULT_FLAT_TYPES = FLAT_TYPE_ORDER
 
 
 def flat_type_order(flat_types, descending=False):
@@ -60,6 +72,7 @@ def build_median(
     df,
     *,
     max_lease=DEFAULT_MAX_LEASE,
+    min_lease=DEFAULT_MIN_LEASE,
     min_year=DEFAULT_MIN_YEAR,
     flat_types=DEFAULT_FLAT_TYPES,
     towns=None,
@@ -69,6 +82,9 @@ def build_median(
 
     Returns tx_monthdate, flat_type, median_price, nb_sales, median_price_k.
 
+    min_lease/max_lease bracket remaining_lease_sold, so a band can be isolated rather than
+    only a ceiling - the static report only ever set the ceiling (75).
+
     min_sales guards against the headline risk of making this interactive: narrow the
     filters enough (one town, one flat type) and a month can hold 1-2 transactions,
     whose "median" reads as signal but is noise. nb_sales is returned so the caller
@@ -77,6 +93,7 @@ def build_median(
     scoped = (
         df
         .filter(col('remaining_lease_sold') <= max_lease)
+        .filter(col('remaining_lease_sold') >= min_lease)
         .filter(col('tx_year') >= min_year)
         .filter(col('flat_type').is_in(list(flat_types)))
     )

@@ -23,6 +23,17 @@ def fetch_html_bytes(filename):
     return filepath.read_text()
 
 
+########################
+#### for the interactive charts (the data itself, not pre-rendered HTML)
+#########################
+
+def fetch_parquet_bytes():
+    # not implemented on this provider yet - the interactive charts were built local-first
+    # and the bucket read lands with the docker/aws/gcp steps. returning None makes the
+    # Explore tab show its empty state instead of raising.
+    return None
+
+
 #######################
 ##### for show code snippet
 #######################
