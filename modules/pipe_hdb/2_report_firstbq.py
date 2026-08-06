@@ -51,8 +51,11 @@ plotter = bq_median
 
 # legend/facet order is declared per-figure via category_orders below instead of by
 # re-sorting the dataframe - which means plotter is no longer mutated between the two charts
-FLAT_TYPE_DESC = flat_type_order(plotter['flat_type'].unique(), descending=True)
-FLAT_TYPE_ASC = flat_type_order(plotter['flat_type'].unique())
+# FLAT_TYPE_ORDER is largest-first, so flat_type_order() returns descending as-is and
+# descending=True is what yields ascending. swapping these two keeps the names honest and
+# keeps this report's chart order unchanged by that constant's direction
+FLAT_TYPE_DESC = flat_type_order(plotter['flat_type'].unique())
+FLAT_TYPE_ASC = flat_type_order(plotter['flat_type'].unique(), descending=True)
 
 start_of_year_lines = january_lines(plotter)
 

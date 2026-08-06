@@ -1,4 +1,5 @@
 import datetime
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -51,6 +52,38 @@ def fetch_parquet_bytes():
         print('parquet for charts is missing, check about it')
         return None
     return LOCAL_PARQUET_PATH.read_bytes()
+
+
+########################
+#### for the saved street-name sets
+#########################
+
+# lives under localdata/ because the allowlist .gitignore tracks everything in /streamlit/**
+# - a file of user-generated sets does not belong in commits. localdata/ is already ignored
+SAVED_SETS_PATH = REPO_ROOT / 'localdata' / 'saved_sets.json'
+
+
+def read_saved_sets():
+    # {set name: [street_name, ...]}. missing file just means nobody has saved one yet,
+    # which is an empty dict rather than an error
+    if not SAVED_SETS_PATH.exists():
+        return {}
+
+    saved_sets = json.loads(SAVED_SETS_PATH.read_text())
+
+    return saved_sets
+
+
+def write_saved_sets(saved_sets):
+    # whole-map write, so a save is a read-modify-write. fine for one local process; on
+    # aws this becomes a race between simultaneous savers - see the branch notes
+    SAVED_SETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SAVED_SETS_PATH.write_text(json.dumps(saved_sets, indent=2, sort_keys=True))
+
+
+# the app hides the save/delete controls where this is False, so a viewer is never offered
+# a button that cannot work
+SAVED_SETS_WRITABLE = True
 
 
 #######################

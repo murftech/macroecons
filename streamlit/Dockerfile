@@ -18,10 +18,16 @@ COPY streamlit/requirements.txt .
 RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
 
 COPY streamlit/app.py .
+COPY streamlit/helper_charts.py .
+COPY streamlit/presets_street_sets.json .
 COPY streamlit/providers providers
 COPY streamlit/.streamlit .streamlit
 
-# code-snippet viewer reads this directly (see CODE_PATH in app.py)
+# TWO reasons this whole directory is needed, not one:
+#   1. app.py imports modules.pipe_hdb.helper_transform_for_plotly - the aggregation shared
+#      with the pipeline, so both sides compute "median resale price" identically
+#   2. the code-snippet viewer reads 2_report_firstbq.py directly (see CODE_PATH in app.py)
+# do not trim this to a single file - the import would break at container start only
 COPY modules/pipe_hdb modules/pipe_hdb
 
 EXPOSE 8080

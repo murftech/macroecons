@@ -35,8 +35,13 @@ DEFAULT_MAX_LEASE = 75
 # leaves the pipeline's charts unchanged. the app can raise it to isolate a lease band
 DEFAULT_MIN_LEASE = 0
 DEFAULT_MIN_YEAR = 2019
-# the flat types this project charts, smallest to largest. drives both the ordering and
-# the app's picker options, so it is the single place to widen or narrow scope.
+# the flat types this project charts, LARGEST FIRST. drives both the ordering and the
+# app's picker options, so it is the single place to widen or narrow scope.
+#
+# the direction here is the baseline every caller reads. flat_type_order() returns this
+# order as-is, and descending=True REVERSES it - so with a largest-first list,
+# descending=True yields smallest-first. worth knowing before flipping this line: it
+# silently flips the live facet grid and the published report's legend together
 #
 # the source data holds three more, all deliberately out of scope:
 #   1 ROOM (87 rows) and MULTI-GENERATION (88 rows) - too rare for a monthly median to
@@ -46,7 +51,10 @@ DEFAULT_MIN_YEAR = 2019
 #
 # they remain in the parquet untouched. filtering here rather than at import keeps the raw
 # data complete, so widening scope later is a one-line change and not a re-import
-FLAT_TYPE_ORDER = ['2 ROOM', '3 ROOM', '4 ROOM', '5 ROOM']
+# FLAT_TYPE_ORDER = ['2 ROOM', '3 ROOM', '4 ROOM', '5 ROOM']
+
+FLAT_TYPE_ORDER = ['5 ROOM', '4 ROOM', '3 ROOM', '2 ROOM']
+
 
 # every charted type is on by default - these coincide today, but the names mean different
 # things: FLAT_TYPE_ORDER is what may be picked, this is what starts picked
@@ -76,6 +84,7 @@ def build_median(
     min_year=DEFAULT_MIN_YEAR,
     flat_types=DEFAULT_FLAT_TYPES,
     towns=None,
+    streets=None,
     min_sales=1,
 ):
     """Median resale price per month per flat_type.
@@ -98,9 +107,14 @@ def build_median(
         .filter(col('flat_type').is_in(list(flat_types)))
     )
 
-    # towns is the dimension the static charts never used at all - None means all 26
+    # towns and streets were both dimensions the static charts never used - None means all.
+    # they AND together when both are given, which is usually redundant (a street sits in
+    # one town) but harmless, and lets a town narrow the picker without clearing a selection
     if towns:
         scoped = scoped.filter(col('town').is_in(list(towns)))
+
+    if streets:
+        scoped = scoped.filter(col('street_name').is_in(list(streets)))
 
     median = (
         scoped

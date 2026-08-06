@@ -48,6 +48,26 @@ def fetch_parquet_bytes():
     return None
 
 
+########################
+#### for the saved street-name sets
+#########################
+
+def read_saved_sets():
+    # not implemented on this provider yet - saved sets were built local-first. the bucket
+    # (or dynamodb) backed version lands with the docker/aws/gcp steps. an empty dict makes
+    # the app show "no saved sets yet" rather than raising.
+    return {}
+
+
+def write_saved_sets(saved_sets):
+    # deliberately a no-op rather than a silent success that loses data - the app checks
+    # SAVED_SETS_WRITABLE below before offering the save controls at all
+    raise NotImplementedError('saved sets are not wired up on this provider yet')
+
+
+SAVED_SETS_WRITABLE = False
+
+
 #######################
 ##### for show code snippet
 #######################
