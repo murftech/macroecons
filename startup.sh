@@ -8,9 +8,18 @@ set -e
 cd "$(dirname "$0")"
 while [ ! -d .git ] && [ "$PWD" != "/" ]; do cd ..; done
 
+
+
+
 # git checkout qa
 # rm -rf venv
 python3.13 -m venv venv
-source venv/bin/activate
+
+if [ -f venv/bin/activate ]; then
+    source venv/bin/activate
+else
+    source venv/Scripts/activate
+fi
+
 pip install -r requirements_dev_commons.txt
 pip install --upgrade pip

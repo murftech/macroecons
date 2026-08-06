@@ -23,11 +23,16 @@ html_filenames = ['1-firstbq-overlay.html', '1-firstbq-facet.html', '1-firstbq-f
 
 # same env-aware directory 1_firstbq.py itself writes to - output/ in-container,
 # the OneDrive folder when run natively
-html_dir = (
-    'output'
-    if os.environ.get('RUNNING_IN_CONTAINER')
-    else '/Users/murftech/Library/CloudStorage/OneDrive-Personal/DBMaster/annotations/reports/macroecons/pipe_hdb'
-)
+
+import platform
+
+if os.environ.get('RUNNING_IN_CONTAINER'):
+    html_dir = 'output'
+elif platform.system() == 'Darwin':
+    html_dir = '/Users/murftech/Library/CloudStorage/OneDrive-Personal/DBMaster/annotations/reports/macroecons/pipe_hdb'
+elif platform.system() == 'Windows':
+    html_dir = 'C:/Users/Talesinc/OneDrive/DBMaster/annotations/reports/macroecons/pipe_hdb'
+
 
 # expected_outputs = ['hive/t2/datagovhdb', 'output/1-firstbq.html']
 expected_outputs = ['hive/t2/datagovhdb'] + [f'{html_dir}/{name}' for name in html_filenames]
