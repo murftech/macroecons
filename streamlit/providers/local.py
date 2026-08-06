@@ -10,8 +10,12 @@ import streamlit as st
 #### for st_iframe (Charts from HTML)
 #########################
 
-LOCAL_HTML_PATH = Path('/Users/murftech/Library/CloudStorage/OneDrive-Personal/DBMaster/annotations/reports/macroecons/pipe_hdb')
+import platform
 
+if platform.system() == 'Darwin':
+    LOCAL_HTML_PATH = Path('/Users/murftech/Library/CloudStorage/OneDrive-Personal/DBMaster/annotations/reports/macroecons/pipe_hdb')
+elif platform.system() == 'Windows':
+    LOCAL_HTML_PATH = Path('C:/Users/Talesinc/OneDrive/DBMaster/annotations/reports/macroecons/pipe_hdb')
 
 def fetch_html_bytes(filename):
     print(f'check LOCAL_HTML_PATH: {LOCAL_HTML_PATH}')

@@ -271,7 +271,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (node.tagName === 'g') {
                     var transform = node.getAttribute('transform') || '';
                     var newTransform = transform.replace(
-                        /translate\(([^,]+),([^)]+)\)/,
+                        /translate/(([^,]+),([^)]+)/)/,
                         function(_, x, currentY) {
                             var cy = parseFloat(currentY);
                             var fixedY = cy < midY ? figHeight * 0.13 : figHeight * 0.57;
@@ -327,12 +327,20 @@ files_to_write = {
     '1-firstbq-fixedaxis.html': wrap_html(html_fixed_y_axis),
 }
 
+import platform
+
 for filename, content in files_to_write.items():
-    target_path = (
-        f'output/{filename}'
-        if os.environ.get('RUNNING_IN_CONTAINER')
-        else f'/Users/murftech/Library/CloudStorage/OneDrive-Personal/DBMaster/annotations/reports/macroecons/pipe_hdb/{filename}'
-    )
+    if os.environ.get('RUNNING_IN_CONTAINER'):
+        target_path = f'output/{filename}'
+    elif platform.system() == 'Darwin':
+        target_path = f'/Users/murftech/Library/CloudStorage/OneDrive-Personal/DBMaster/annotations/reports/macroecons/pipe_hdb/{filename}'
+    elif platform.system() == 'Windows':
+        target_path = f'C:/Users/Talesinc/OneDrive/DBMaster/annotations/reports/macroecons/pipe_hdb/{filename}'
+    else:
+        raise OSError(f'Unsupported platform: {platform.system()}')
+
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
     with open(target_path, 'w') as f:
         print('writing html to')
         print(target_path)

@@ -92,6 +92,8 @@ townnames = sortcount(hdb_sel, 'town', 100)
 townstreet = sortcount(hdb_sel, ['town', 'street_name'], 100)
 sortcount(hdb_sel, 'flat_type', 100)
 
+from pathlib import Path
+Path('hive/t2').mkdir(parents=True, exist_ok=True)
 hdb_sel.write_parquet('hive/t2/datagovhdb')
 
 
