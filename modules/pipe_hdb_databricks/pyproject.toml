@@ -1,0 +1,25 @@
+[project]
+name = 'pipe-hdb'
+
+version = '0.1.0'
+# MAJOR  →  breaking changes: 1.x → 2.0  means "your code may break"
+# MINOR  →  new, backwards-compatible
+# PATCH  →  fixes, no API change
+
+require-python = '3.12.*'
+# this matches databricks environment 4,5
+
+dependencies = [
+    'polars',
+]
+
+# We did uv.lock here because SERVERLESS compute cannot use docker, so we have to use uv
+# to computationally generate a LOCKED requirements.txt for complete staticness of all
+# installs and their dependencies.
+# Databricks provides an unchangeable the environemnt with environment X everytime and then for the unavailable layers, 
+# installs from PyPI at run time (cached after the first resolve).
+# As there is no docker, we need to make sure every single version and dependency is marked.
+# You should not search the internet yourself. Just use uv to crawl the dependency graph.
+# So reproducibility is two layers:
+#   environment_version "5"  -> pins the base                    (Databricks owns this)
+#   uv.lock                  -> pins the diff + ALL transitives   (we own this)

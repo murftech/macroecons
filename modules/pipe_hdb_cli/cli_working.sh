@@ -222,7 +222,7 @@ JOB_JSON=$(cat <<EOF
       "environment_key": "default_env",
       "spec": {
         "environment_version": "5",
-        "dependencies": ["polars"]
+        "dependencies": ["-r ${SRC_REMOTE}/requirements.txt"]
       }
     }
   ],

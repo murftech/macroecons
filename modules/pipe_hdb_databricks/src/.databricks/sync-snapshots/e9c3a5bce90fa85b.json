@@ -1,0 +1,29 @@
+{
+  "version": "v1",
+  "host": "https://dbc-b01338b1-a584.cloud.databricks.com",
+  "remote_path": "/Workspace/Users/murftech7@gmail.com/deployments/pipe_hdb_sh/src",
+  "last_modified_times": {
+    "01_ingest_bronze.py": "2026-08-18T16:22:42.750462133+08:00",
+    "02_report_plotly.py": "2026-08-18T16:22:42.750692209+08:00",
+    "03_publish_outputs.py": "2026-08-18T16:22:42.750894744+08:00",
+    "helper_hdb.py": "2026-08-18T16:22:42.751094529+08:00",
+    "helper_transform_for_plotly.py": "2026-08-18T16:22:42.751285648+08:00",
+    "requirements.txt": "2026-08-18T16:55:58.369674232+08:00"
+  },
+  "local_to_remote_names": {
+    "01_ingest_bronze.py": "01_ingest_bronze.py",
+    "02_report_plotly.py": "02_report_plotly.py",
+    "03_publish_outputs.py": "03_publish_outputs.py",
+    "helper_hdb.py": "helper_hdb.py",
+    "helper_transform_for_plotly.py": "helper_transform_for_plotly.py",
+    "requirements.txt": "requirements.txt"
+  },
+  "remote_to_local_names": {
+    "01_ingest_bronze.py": "01_ingest_bronze.py",
+    "02_report_plotly.py": "02_report_plotly.py",
+    "03_publish_outputs.py": "03_publish_outputs.py",
+    "helper_hdb.py": "helper_hdb.py",
+    "helper_transform_for_plotly.py": "helper_transform_for_plotly.py",
+    "requirements.txt": "requirements.txt"
+  }
+}
