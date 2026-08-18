@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=bundle_schema.json
+#
+# ^ this one line is what gives the editor ctrl-space completion of every valid key,
+# hover descriptions, and red squiggles on typos. bundle_schema.json is GENERATED, not
+# hand-written - regenerate it whenever the CLI is upgraded:
+#   databricks bundle schema > bundle_schema.json
+# it is deliberately excluded from sync (see the sync: block below) and should not be
+# committed - it is 858K, and it belongs to the CLI version, not to this project.
+
+# Databricks Asset Bundle for pipe_hdb
+#
+# this top level yml is simply to tell where the target goes and give env variables to resolve into the resource ymls.
+# hence it is just source and destination configs
+# include pulls the job (orchestrator) ymls and the unity_catalog ymls which is the real configs.
+# This is the Databricks equivalent of Dockerfile + deploy_aws.sh + deploy_gcp.sh +
+# schedules.sh + configs_aws/* + configs_gcp/* combined. One `databricks bundle deploy`
+# creates the Unity Catalog schema + volume, uploads the code, and creates a scheduled
+# job. No container image, no IAM policies, no cloud scheduler resource to hand-manage.
+#
+# Deploy steps (see README.md for the full walkthrough):
+#   1. Install databricks CLI: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh)
+#   1b. Better method: brew install databricks
+#   2. databricks auth login --host <your-workspace-url>
+#   3. databricks bundle validate
+#   4. databricks bundle deploy -t dev
+#   5. databricks bundle run hdb_pipeline -t dev
+
+bundle:
+  name: pipe_hdb
+  # newer, faster deployment path. (Originally also needed for resources.catalogs
+  # support - that got pulled back out, see resources/unity_catalog.yml, but this
+  # is still the better engine to be on regardless.)
+  engine: direct
+
+include:
+  # include means take all of these dictioaries too.
+  # it is like dockerfile?
+  # why doesnt it include src?
+  - resources/*.yml
+
+# include: says which YAML contributes CONFIG. sync: says which files get UPLOADED.
+# they are unrelated mechanisms - that is why src/ appears in neither: sync ships the whole
+# bundle-root directory by default, so everything here is uploaded unless excluded below.
+# check what actually shipped with: python3 -m json.tool .databricks/bundle/dev/deployment.json
+sync:
+  exclude:
+    - bundle_schema.json # 858K, generated, editor-only - no reason to ship it to the workspace
+    - PROJECT_CONTEXT.md # handoff notes for humans, not something the job needs
+    - "*.sh" # deploy_dbricks.sh runs on this laptop, never on Databricks compute
+
+# are these three variables must be defined as is? or it is custom?
+# are these ENV variables?
+variables:
+  catalog:
+    description: "Unity Catalog catalog to provision the schema/volume/table in. Create this one by hand first via Catalog Explorer (Free Edition limitation - see resources/unity_catalog.yml) - the bundle provisions everything inside it from here on."
+    default: macroecons
+  schema:
+    description: "Schema (database) name this project owns inside the catalog."
+    default: macroecons_hdb
+  volume_name:
+    description: "Unity Catalog volume that holds the generated Plotly HTML report files (replaces the old S3/GCS upload target)."
+    default: reports
+  gcs_bucket:
+    description: "Optional: set to also push the HTML reports to a GCS bucket, same as run_pipeline.py used to. Leave blank to skip."
+    default: ""
+  s3_bucket:
+    description: "Optional: set to also push the HTML reports to an S3 bucket, same as run_pipeline.py used to. Leave blank to skip."
+    default: ""
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      # Databricks CLI fills this from `databricks auth login` - no need to hardcode a host here.
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
+
+# run this to check the substition into databricks CLI
+# databricks bundle validate -o json
+
+### why do we need the .databricks states store?
+# Deletion: no snapshot means no way to know a resource was removed from YAML — it'd just sit orphaned in the workspace forever.
+
+# Identity mapping: the snapshot remembers which YAML resource maps to which server-assigned object ID, so redeploys update the right thing instead of duplicating it.
+
+# Drift detection: comparing live workspace state against the last snapshot (not just your YAML) is how the CLI notices something got changed outside the bundle.
+
+# Summary: the diff isn't a passive log — it's the decision engine for create/update/delete/skip, and it needs a persisted snapshot specifically to catch deletions, avoid duplicates, and detect out-of-band changes.

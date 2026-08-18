@@ -1,0 +1,92 @@
+# yaml-language-server: $schema=../pipe_hdb_databricks/bundle_schema.json
+
+#### the smallest databricks.yml that actually works ####
+# a standalone learning bundle. diff it against ../pipe_hdb_databricks to see what a real
+# one adds, and against ../pipe_hdb_cli to see what doing the same thing without bundles
+# costs. validate it with:
+#
+#   databricks bundle validate --strict
+#
+# NOTE the schema path above points at the sibling module rather than a local copy, because
+# bundle_schema.json is 858K and GENERATED - one copy to regenerate on CLI upgrade beats
+# two that drift. to make this module fully self-contained instead, run
+#   databricks bundle schema > bundle_schema.json
+# here and shorten that path to just `bundle_schema.json`.
+
+bundle:
+  # the ONLY required key in this entire file. everything below is optional.
+  # it is also the identity of the deployment - change it after deploying and the CLI
+  # loses track of what it created and makes a second copy of everything.
+  name: minimal_hdb
+
+include:
+  # not required either - but without it, resources/job.yml is never read, and you would
+  # deploy a bundle containing zero resources with no error at all.
+  # note: this glob is NOT recursive, and it will not match .yaml (only .yml).
+  - resources/*.yml
+
+#### LAYER 1b - the OTHER kind of reference, and it is not the same thing ####
+# ${var.catalog} and ${resources.x.y} look alike and do completely different jobs:
+#
+#   ${var.catalog}                        -> plain compile-time text substitution.
+#                                            resolved on this laptop before any API call.
+#                                            creates NO dependency edge.
+#   ${resources.schemas.X.name}           -> a dependency edge. tells the CLI to create X
+#                                            first, and is left UNRESOLVED at validate time
+#                                            (check `bundle validate -o json` - it is still
+#                                            a literal ${...} string there, resolved only
+#                                            at deploy).
+#
+# so use var for values that repeat, and resources for things that must EXIST first.
+# the catalog is a var, not a resource reference, precisely because this bundle does not
+# create it - nothing here can depend on it.
+variables:
+  catalog:
+    description: "Existing Unity Catalog catalog to build inside. Create it once with the SQL statement in resources/unity_catalog.yml - the catalogs REST API is rejected on Free Edition."
+    default: databricks_class
+
+
+#### everything past this point is what you ADD as you need it ####
+# roughly the order you will actually want them:
+#
+# 1. targets:          the first thing you will miss. without it the CLI invents a target
+#                      called "default" with no mode, so you get none of the dev-mode
+#                      niceties (name prefixing, forced-paused schedules, per-user paths).
+#                      this is what ../databricks.yml uses to get [dev murftech7] prefixes.
+#
+#      targets:
+#        dev:
+#          mode: development
+#          default: true
+#
+# 2. variables:        the moment a value appears in more than one file. declare here,
+#                      reference as ${var.name}, override at deploy with --var="name=x".
+#                      NOTE --var only works for variables declared here first.
+#
+#      variables:
+#        catalog:
+#          description: "..."
+#          default: macroecons
+#
+# 3. sync:             once the bundle root holds files the workspace does not need.
+#                      sync ships the whole directory by default - this is how you carve
+#                      things back out.
+#
+#      sync:
+#        exclude:
+#          - "*.md"
+#
+# 4. run_as:           when the job should run as a service principal instead of you.
+#                      relevant the day you add a prod target.
+#
+# 5. permissions:      to grant other users/groups access to what this bundle deploys.
+#
+# 6. artifacts:        only if you start building python wheels instead of shipping
+#                      loose .py files.
+#
+# full list of valid top-level keys (from the schema):
+#   artifacts, bundle, environments, experimental, include, permissions, presets,
+#   python, resources, run_as, scripts, sync, targets, variables, workspace
+#
+# to see any of them explained, ctrl-space on a blank line here - that is what the
+# yaml-language-server line at the top of this file buys you.
