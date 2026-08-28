@@ -6,6 +6,12 @@
 !/cloud_aws_shared/**
 !/cloud_gcp_shared/**
 !/modules/pipe_hdb/**
+!/modules/pipe_hdb_cli/**
+!/modules/pipe_hdb_databricks/**
+!/modules/pipe_hdb_minimal/**
+
+
+
 !/streamlit/**
 
 # Allow these specific top-level files

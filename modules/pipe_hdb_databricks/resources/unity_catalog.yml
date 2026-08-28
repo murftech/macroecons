@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=../bundle_schema.json
+
+# Unity Catalog objects this project owns.
+#
+# This replaces the informal "hive/t2/" local folder convention from the original
+# pipeline: instead of a folder naming scheme you remember by hand, the schema and
+# volume are real governed objects with access control, lineage, and discovery in
+# Catalog Explorer.
+#
+# NOTE on the catalog itself: this bundle does NOT create the "macroecons" catalog
+# for you. Free Edition workspaces use Databricks-managed "Default Storage" with no
+# root storage URL exposed to the metastore, and the catalogs REST API (which is
+# what `resources.catalogs` in a bundle calls under the hood) currently rejects
+# catalog creation without an explicit MANAGED LOCATION - it errors with "Metastore
+# storage root URL does not exist" even though Default Storage is on. This is a
+# known Free Edition limitation (databricks/cli#4513), not something fixable from
+# this YAML. The UI's "Create Catalog" button *does* know how to fall back to
+# Default Storage automatically - it just isn't exposed through this API path yet.
+#
+# So: create the catalog once by hand (Catalog Explorer -> the "+" next to Catalog
+# -> Create Catalog -> name it exactly what var.catalog is set to below -> leave
+# storage as Default Storage) before your first `bundle deploy`. Everything after
+# that - the schema, the volume, the table the job writes, the reports folder - is
+# still fully provisioned by this bundle, same as before.
+
+resources:
+  schemas:
+    hdb_schema:
+      name: ${var.schema}
+      catalog_name: ${var.catalog}
+      comment: "HDB (Singapore public housing) resale price pipeline - data.gov.sg source, ported from modules/pipe_hdb."
+
+  volumes:
+    hdb_reports_volume:
+      name: ${var.volume_name}
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.hdb_schema.name}
+      volume_type: MANAGED
+      comment: "Generated Plotly HTML reports (1-firstbq-overlay/facet/fixedaxis.html), one subfolder per run date."

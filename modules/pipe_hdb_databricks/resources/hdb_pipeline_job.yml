@@ -1,0 +1,94 @@
+# yaml-language-server: $schema=../bundle_schema.json
+#
+# same schema as databricks.yml - the root schema has no required fields, so a file
+# holding only a `resources:` block validates against it cleanly.
+
+# The Lakeflow Job. This one resource replaces:
+#   Dockerfile, deploy_docker.sh, deploy_aws.sh, deploy_gcp.sh, schedules.sh,
+#   configs_aws/*.json, configs_gcp/cloudbuild.yaml
+# No image to build, no ECS task definition, no Cloud Scheduler - the job carries
+# its own schedule, and `databricks bundle deploy` is the only "deploy" step.
+
+resources:
+  jobs:
+    hdb_pipeline:
+      name: "hdb-pipeline-daily"
+
+      schedule:
+        # same cadence as schedules.sh's CRON_SCHEDULE="0 1 * * *" (daily 1am),
+        # quartz format adds a leading seconds field.
+        quartz_cron_expression: "0 0 1 * * ?"
+        timezone_id: "Asia/Singapore"
+        pause_status: PAUSED # flip to UNPAUSED once you've done one manual `bundle run` and are happy with it
+
+      # No cluster block on purpose - omitting it uses serverless compute, which is
+      # what Free Edition gives you by default. Nothing to size, patch, or idle-shutdown.
+      environments:
+        - environment_key: default_env
+          spec:
+            # "1" (the original value here) is Databricks' oldest serverless
+            # environment version (March 2024) and isn't supported on freshly
+            # provisioned Free Edition workspaces. "4" (Aug 2025) is the current
+            # mature/stable version - "5" exists too (Feb 2026) but is still
+            # tagged Beta, so sitting one version back is the safer default.
+            # was `client: "4"` - the schema now says of that field, verbatim:
+            # "Use `environment_version` instead." same value, current spelling.
+            environment_version: "4"
+            dependencies:
+              - polars
+              - plotly==6.8.0
+              - pandas==2.3.0
+              - pyarrow
+              - requests
+              - google-cloud-storage # only used if var.gcs_bucket is set
+              - boto3 # only used if var.s3_bucket is set
+
+      tasks:
+        - task_key: ingest_bronze
+          environment_key: default_env
+          spark_python_task:
+            python_file: ../src/01_ingest_bronze.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${resources.schemas.hdb_schema.name}"
+              # spark_python_task can't see its own __file__ (see the docstring in
+              # 01_ingest_bronze.py) - so it's told where its sibling helper_hdb.py
+              # landed using the bundle's own known deploy path instead of guessing.
+              - "--src-dir"
+              - "${workspace.root_path}/files/src"
+
+        - task_key: report_plotly
+          depends_on:
+            - task_key: ingest_bronze
+          environment_key: default_env
+          spark_python_task:
+            python_file: ../src/02_report_plotly.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${resources.schemas.hdb_schema.name}"
+              - "--volume"
+              - "${resources.volumes.hdb_reports_volume.name}"
+              - "--src-dir"
+              - "${workspace.root_path}/files/src"
+
+        - task_key: publish_outputs
+          depends_on:
+            - task_key: report_plotly
+          environment_key: default_env
+          spark_python_task:
+            python_file: ../src/03_publish_outputs.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${resources.schemas.hdb_schema.name}"
+              - "--volume"
+              - "${resources.volumes.hdb_reports_volume.name}"
+              - "--gcs-bucket"
+              - "${var.gcs_bucket}"
+              - "--s3-bucket"
+              - "${var.s3_bucket}"

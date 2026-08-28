@@ -1,0 +1,92 @@
+# yaml-language-server: $schema=../../pipe_hdb_databricks/bundle_schema.json
+
+#### the smallest job resource that validates ####
+# compare against ../../pipe_hdb_databricks/resources/hdb_pipeline_job.yml to see what the
+# real one adds, and ../../pipe_hdb_cli/configs/job.json for the same graph as raw JSON.
+# per the schema, jobs.Task has exactly ONE required field (task_key) and 40 optional
+# ones - so almost everything in the real job file is intent, not obligation.
+
+resources:
+  jobs:
+    # your name, freely chosen. it is NOT sent to Databricks - it is the key the CLI
+    # stores in .databricks/bundle/<target>/resources.json to remember which server-side
+    # object this block created. rename it after deploying and the CLI destroys the old
+    # job and creates a new one.
+    my_job:
+
+      tasks:
+        - task_key: only_task # the one genuinely required field on a task
+
+          # a task must say WHERE it runs. omit this and validate fails with:
+          #   "Task requires a cluster or an environment to run. Specify one of the
+          #    following fields: job_cluster_key, environment_key, existing_cluster_id,
+          #    new_cluster."
+          # environment_key = serverless, which is all Free Edition offers.
+          environment_key: env
+
+          # path is relative to THIS file, not to the bundle root. the CLI rewrites it
+          # to an absolute workspace path at deploy time (the TranslatePaths mutator).
+          spark_python_task:
+            python_file: ../src/hello.py
+
+      environments:
+        - environment_key: env # must match the environment_key on the task above
+          spec:
+            # serverless environment version. "4" (Aug 2025) is current stable;
+            # "1" is rejected outright on new Free Edition workspaces.
+            # this field used to be spelled `client` - the schema now says
+            # "Use `environment_version` instead."
+            environment_version: "4"
+
+
+#### what you ADD next, roughly in the order you will want it ####
+#
+# 1. name:              without it the job is literally called "Untitled" (a schema
+#                       default you can see in `databricks bundle validate --debug`).
+#
+#      name: "my-first-job"
+#
+# 2. more tasks +       this is the whole point of a job over a script. depends_on turns
+#    depends_on:        a list of tasks into a DAG with real retry/skip semantics, instead
+#                       of run_pipeline.py's subprocess.run chain.
+#
+#      - task_key: second_task
+#        depends_on:
+#          - task_key: only_task
+#
+# 3. parameters:        how you pass values in. note these arrive in your python as plain
+#                       argv strings - by then every ${var.x} is long since substituted.
+#
+#      spark_python_task:
+#        python_file: ../src/hello.py
+#        parameters: ["--catalog", "${var.catalog}"]
+#
+# 4. dependencies:      pip packages for the serverless environment.
+#
+#      spec:
+#        environment_version: "4"
+#        dependencies: [polars, plotly]
+#
+# 5. schedule:          the job carries its own cron - no EventBridge, no Cloud Scheduler.
+#                       quartz format has a LEADING SECONDS field, so daily-1am is
+#                       "0 0 1 * * ?" here but "0 1 * * *" in ordinary cron.
+#                       WARNING: the schema default for pause_status is UNPAUSED, so a
+#                       schedule with no pause_status set will start firing immediately.
+#
+#      schedule:
+#        quartz_cron_expression: "0 0 1 * * ?"
+#        timezone_id: "Asia/Singapore"
+#        pause_status: PAUSED
+#
+# 6. max_concurrent_runs:  defaults to 1. mode: development silently raises it to 4.
+#
+# 7. email_notifications:  on_failure/on_success. this is the observability the ECS +
+#    / webhook_notifications  EventBridge setup never had.
+#
+# 8. timeout_seconds       so a hung task fails loudly instead of burning compute.
+#    / max_retries
+#
+# to discover any of these without guessing: ctrl-space inside a block, or configure it
+# in the Jobs UI and run
+#   databricks bundle generate job --existing-job-id <id> --key my_job
+# to have the CLI write the YAML for you.

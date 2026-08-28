@@ -1,0 +1,57 @@
+{
+  "_comment_": "Job SETTINGS body for `databricks jobs create --json`. This file is the answer to 'what genuinely needs to be JSON?' - the task graph. Everything else this module does (catalog, schema, volume, file upload, triggering) is a plain CLI command in deploy_cli.sh with no JSON at all. Tokens like __SRC__ are substituted by deploy_cli.sh into .state/job.rendered.json - the imperative stand-in for the bundle's TranslatePaths and ResolveVariableReferences mutators, which did this for free.",
+
+  "name": "__JOB_NAME__",
+  "max_concurrent_runs": 1,
+
+  "schedule": {
+    "quartz_cron_expression": "0 0 1 * * ?",
+    "timezone_id": "Asia/Singapore",
+    "pause_status": "PAUSED"
+  },
+
+  "environments": [
+    {
+      "environment_key": "default_env",
+      "spec": {
+        "environment_version": "4",
+        "dependencies": [
+          "polars",
+          "plotly==6.8.0",
+          "pandas==2.3.0",
+          "pyarrow",
+          "requests"
+        ]
+      }
+    }
+  ],
+
+  "tasks": [
+    {
+      "task_key": "ingest_bronze",
+      "environment_key": "default_env",
+      "spark_python_task": {
+        "python_file": "__SRC__/01_ingest_bronze.py",
+        "parameters": ["--catalog", "__CATALOG__", "--schema", "__SCHEMA__", "--src-dir", "__SRC__"]
+      }
+    },
+    {
+      "task_key": "report_plotly",
+      "depends_on": [{ "task_key": "ingest_bronze" }],
+      "environment_key": "default_env",
+      "spark_python_task": {
+        "python_file": "__SRC__/02_report_plotly.py",
+        "parameters": ["--catalog", "__CATALOG__", "--schema", "__SCHEMA__", "--volume", "__VOLUME__", "--src-dir", "__SRC__"]
+      }
+    },
+    {
+      "task_key": "publish_outputs",
+      "depends_on": [{ "task_key": "report_plotly" }],
+      "environment_key": "default_env",
+      "spark_python_task": {
+        "python_file": "__SRC__/03_publish_outputs.py",
+        "parameters": ["--catalog", "__CATALOG__", "--schema", "__SCHEMA__", "--volume", "__VOLUME__"]
+      }
+    }
+  ]
+}

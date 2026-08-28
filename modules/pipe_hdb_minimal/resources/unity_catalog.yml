@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=../../pipe_hdb_databricks/bundle_schema.json
+
+#### LAYER 1 - the two Unity Catalog objects a bundle can actually declare ####
+# there is no `resources.tables`. a bundle creates the CONTAINER (schema) and the
+# FOLDER (volume); tables are created by your code at runtime with a spark write.
+#
+# the catalog is not declared here either - `resources.catalogs` exists in the schema but
+# calls the REST endpoint Free Edition rejects ("Metastore storage root URL does not
+# exist"). the SQL Statement Execution API goes through a DIFFERENT code path and works,
+# so this is still fully CLI - no UI needed, contrary to what the older note in
+# ../../pipe_hdb_databricks/resources/unity_catalog.yml says:
+#
+#   databricks api post /api/2.0/sql/statements --json '{"warehouse_id":"3a82455c9b1702b1","statement":"CREATE CATALOG IF NOT EXISTS databricks_class","wait_timeout":"30s"}'
+#
+# the warehouse auto-starts on the first statement and stops itself again after idle.
+
+resources:
+  schemas:
+    practice_schema: # <- MY key. this is the identity the CLI stores in state.
+      # required: name + catalog_name. that is the whole minimum.
+      name: minimal_practice
+      catalog_name: ${var.catalog}
+      comment: "Practice schema for pipe_hdb_minimal - built up one referenced layer at a time."
+
+  volumes:
+    practice_volume:
+      # required: catalog_name + schema_name + name. volume_type defaults to MANAGED.
+      name: outputs
+      catalog_name: ${var.catalog}
+
+      # THE POINT OF THIS LAYER.
+      # writing `minimal_practice` here as a literal would work identically today - and
+      # would silently destroy the dependency edge. by REFERENCING the schema resource,
+      # the CLI learns "volume needs schema first" and orders the API calls itself.
+      # prove it: `databricks bundle plan -o json` shows a depends_on entry naming this
+      # exact string. hardcode the name and that entry disappears.
+      schema_name: ${resources.schemas.practice_schema.name}
