@@ -3,42 +3,31 @@ import polars as pl
 import plotly.graph_objects as go
 import copy
 
+import sys
+sys.path.append('')  # put the repo root on the path, same idiom as 0_import_datagov.py
+
+# the filtering + aggregation now lives in a module the streamlit app imports too, so both
+# sides compute "median resale price" from one definition. presentation stays here, because
+# this file builds STATIC html (cdn plotly, iframe sizing, tooltip js) that the app doesn't want
+from modules.pipe_hdb.helper_transform_for_plotly import (
+    build_median,
+    ceil_tick,
+    flat_type_order,
+    floor_tick,
+    january_lines,
+)
+
 
 datagovhdb = pl.read_parquet('hive/t2/datagovhdb')
 
 # dc.listvalues(datagovhdb, 'flat_type')
 
-
-df_scope = (datagovhdb
-              .filter(col('remaining_lease_sold') <= 75)
-            #   .filter(col('remaining_lease_sold') >= 75)
-
-              .filter(col('tx_year')>=2019)
-              .filter(col('flat_type').is_in(['2 ROOM','3 ROOM','4 ROOM','5 ROOM']))
-)
-
-# BQ: for each flat_type controlled by median and sample size, are prices dropping or increasing?
-# technical bq: for each flat_type controlled by median and sample size, are prices dropping or increasing?
-
-# df_scope.glimpse()
-bq_sel = df_scope.select('tx_year', 'tx_monthdate', 'flat_type', 'remaining_lease_sold', 'town', 'street_name', 'resale_price')
-
-# bq_sel.show()
-
 # BQ: for each flat_type, are median prices dropping or increasing across tx_monthdate?
-bq_median = (
-    bq_sel
-    .group_by('tx_monthdate', 'flat_type')
-    .agg(
-        col('resale_price').median().alias('median_price'),
-        pl.len().alias('nb_sales'),
-    )
-    .sort('flat_type', 'tx_monthdate')
-)
+# no arguments = helper_transform_for_plotly.py's defaults, which are the scope this file
+# used to hardcode (remaining lease <= 75, tx_year >= 2019, the middle four flat types)
+bq_median = build_median(datagovhdb)
 
 # bq_median.show(1000)
-
-# dc.listvalues(bq_median, 'flat_type')
 
 
 
@@ -49,8 +38,6 @@ bq_median = (
 
 
 
-import math
-import pandas as pd
 import plotly.express as px
 
 
@@ -59,19 +46,18 @@ import plotly.express as px
 ####### additional information aggregates
 ####################################
 
-plotter = bq_median.with_columns(
-    (pl.col('median_price') / 1000).round(0) * 1000,
-    ((pl.col('median_price') / 1000).round(0)).alias('median_price_k'),
-).to_pandas()
+# build_median() already returns the rounded median_price and the median_price_k hover column
+plotter = bq_median
 
-plotter['flat_type'] = pd.Categorical(
-    plotter['flat_type'],
-    categories=['5 ROOM', '4 ROOM', '3 ROOM', '2 ROOM'],
-    ordered=True,
-)
-plotter = plotter.sort_values(['flat_type', 'tx_monthdate'])
+# legend/facet order is declared per-figure via category_orders below instead of by
+# re-sorting the dataframe - which means plotter is no longer mutated between the two charts
+# FLAT_TYPE_ORDER is largest-first, so flat_type_order() returns descending as-is and
+# descending=True is what yields ascending. swapping these two keeps the names honest and
+# keeps this report's chart order unchanged by that constant's direction
+FLAT_TYPE_DESC = flat_type_order(plotter['flat_type'].unique())
+FLAT_TYPE_ASC = flat_type_order(plotter['flat_type'].unique(), descending=True)
 
-start_of_year_lines = plotter[plotter['tx_monthdate'].dt.month == 1]['tx_monthdate'].unique()
+start_of_year_lines = january_lines(plotter)
 
 ################################
 ######## overall chart #####
@@ -79,18 +65,9 @@ start_of_year_lines = plotter[plotter['tx_monthdate'].dt.month == 1]['tx_monthda
 
 
 
-########## 
-#### tedious blackbox scale maker
-########## 
-
-def ceil_tick(val, dtick=50000):
-    return (math.ceil(val / dtick) + 1) * dtick
-
-def floor_tick(val, dtick=50000):
-    return math.floor(val / dtick) * dtick
-########## 
-#### tedious blackbox scale maker
-########## 
+##########
+#### tedious blackbox scale maker - ceil_tick/floor_tick now imported from helper_transform_for_plotly.py
+##########
 
 
 fig_overlay = px.line(
@@ -109,6 +86,8 @@ fig_overlay = px.line(
     labels={'tx_monthdate': 'Monthly',
             'median_price': 'Median Price (SGD)',
             'flat_type': 'Flat Type'},
+
+    category_orders={'flat_type': FLAT_TYPE_DESC},
 
     template='plotly_dark',
 )
@@ -139,14 +118,6 @@ fig_overlay.update_yaxes(dtick=100000, range=[0, ceil_tick(plotter['median_price
 
 
 
-plotter['flat_type'] = pd.Categorical(
-    plotter['flat_type'],
-    categories=['2 ROOM', '3 ROOM', '4 ROOM', '5 ROOM'],
-    ordered=True,
-)
-
-plotter = plotter.sort_values(['flat_type', 'tx_monthdate'])
-
 fig_facet = px.line(
     plotter,
 
@@ -160,6 +131,7 @@ fig_facet = px.line(
     title='Median Resale Price individually by Flat Type, Year-Monthly',
 
     labels={'tx_monthdate': 'Monthly', 'median_price': 'Median Price (SGD)'},
+    category_orders={'flat_type': FLAT_TYPE_ASC},
     template='plotly_dark',
 
     facet_col_spacing=0.1,
