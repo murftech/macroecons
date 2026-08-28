@@ -18,9 +18,11 @@ USER_EMAIL=murftech7@gmail.com
 SCHEDULE_CRON="0 0 1 * * ?"
 SCHEDULE_TZ="Asia/Singapore"
 SCHEDULE_PAUSE="PAUSED"
+PROFILE=murftech7@gmail.com
 
 usage() {
-  echo "Usage: ./deploy_databricks.sh [upload|job|deploy|run|status|destroy|all]"
+  echo "Usage: ./deploy_databricks.sh [login|upload|job|deploy|run|status|destroy|all]"
+  echo "  login    - check auth, re-authenticate if the OAuth token expired"
   echo "  upload   - sync source code to workspace"
   echo "  job      - create or update the job"
   echo "  deploy   - upload + job"
@@ -52,6 +54,24 @@ workspace_src_path() {
 }
 
 #### actions ####
+
+do_login() {
+  echo "== login =="
+  # OAuth (U2M) tokens expire, and every other action in this script then fails
+  # with "refresh token is invalid" until this is re-run. Checked before logging
+  # in because `databricks auth login` always opens a browser - no point doing
+  # that when the existing session is still good.
+  # Re-auth by --profile, not --host: two profiles in ~/.databrickscfg point at
+  # the same workspace, so --host cannot tell which one to refresh.
+  if databricks current-user me --profile "${PROFILE}" -o json >/dev/null 2>&1; then
+    echo "  already authenticated as ${PROFILE}"
+    databricks auth describe --profile "${PROFILE}"
+    return 0
+  fi
+  echo "  no valid session - opening browser for profile ${PROFILE}"
+  databricks auth login --profile "${PROFILE}"
+  databricks auth describe --profile "${PROFILE}"
+}
 
 do_upload() {
   echo "== upload =="
@@ -155,6 +175,7 @@ do_destroy() {
 main() {
   case "$1" in
 
+  login) do_login ;;
   upload) do_upload ;;
   job) do_job ;;
   deploy)

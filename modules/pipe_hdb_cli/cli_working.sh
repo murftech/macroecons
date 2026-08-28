@@ -6,7 +6,8 @@
 # also databricks login is always on.
 
 # databricks auth describe
-# databricks auth login --host https://dbc-b01338b1-a584.cloud.databricks.com
+# databricks auth login --host https://dbc-b01338b1-a584.cloud.databricks.
+# databricks auth login --profile murftech7@gmail.com
 
 # ###########
 # #### Catalog, SCHEMA_NAME, Tables, Volumes
