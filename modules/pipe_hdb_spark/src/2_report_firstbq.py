@@ -1,41 +1,170 @@
-from polars import col, concat, lit, when
-import polars as pl
-import plotly.graph_objects as go
+"""Spark port of 2_report_firstbq.py.
+
+Only the DATA half changes. Everything from "charts" onward is plotly and is
+carried over verbatim - plotly cannot consume a Spark DataFrame, and it does not
+need to: build_median collapses ~239k rows to a few hundred, so the result is
+collected to pandas and the rest of the script is unchanged.
+
+THAT BOUNDARY IS THE POINT. Spark does the distributed part (filter, group,
+median over the full dataset); pandas does the small part (a chart's worth of
+rows). Collecting a large DataFrame with .toPandas() pulls every row into the
+driver's memory and is how people OOM a cluster - it is safe here precisely
+because the aggregation already shrank the data.
+
+Reuses three helpers from helper_transform_for_plotly.py unchanged, because they
+are pure Python with no polars in them: flat_type_order, ceil_tick, floor_tick.
+Only build_median (polars) and january_lines (polars) needed reimplementing.
+"""
+
 import copy
+import os
+import platform
+from pathlib import Path
 
-import sys
-sys.path.append('')  # put the repo root on the path, same idiom as 0_import_datagov.py
+import pandas as pd
 
-# the filtering + aggregation now lives in a module the streamlit app imports too, so both
-# sides compute "median resale price" from one definition. presentation stays here, because
-# this file builds STATIC html (cdn plotly, iframe sizing, tooltip js) that the app doesn't want
-from modules.pipe_hdb.helper_transform_for_plotly import (
-    build_median,
+
+# pure-Python helpers - no polars inside them, so they port for free
+from helper_transform_for_plotly import (
+    DEFAULT_FLAT_TYPES,
+    DEFAULT_MAX_LEASE,
+    DEFAULT_MIN_LEASE,
+    DEFAULT_MIN_YEAR,
     ceil_tick,
     flat_type_order,
     floor_tick,
-    january_lines,
 )
 
 
-datagovhdb = pl.read_parquet('hive/t2/datagovhdb')
+# ── start spark ───────────────────────────────────────────────────────────────
 
-# dc.listvalues(datagovhdb, 'flat_type')
+# ── start spark ───────────────────────────────────────────────────────────────
 
-# BQ: for each flat_type, are median prices dropping or increasing across tx_monthdate?
-# no arguments = helper_transform_for_plotly.py's defaults, which are the scope this file
-# used to hardcode (remaining lease <= 75, tx_year >= 2019, the middle four flat types)
-bq_median = build_median(datagovhdb)
+from helper_getspark import get_spark
+# from modules.pipe_hdb_spark.src.helper_getspark import get_spark
+spark = get_spark()
 
-# bq_median.show(1000)
+from helper_sparkutils import F, T, col, lit, when, to_date, year, bround, count, median
+# from pyspark.sql.functions import only use this line further if i need something new. Also i would not want to edit the git repoed stuff.
 
 
+# from modules.pipe_hdb_spark.src.helper_getspark import get_spark
+# spark = get_spark()
+
+# from modules.pipe_hdb_spark.src.helper_sparkutils import F, T, col, lit, when, to_date, year, bround, count, median
+
+
+
+# ------------------
+_HERE = Path(__file__).resolve().parent if '__file__' in globals() else Path.cwd()
+
+
+def _repo_root(start: Path) -> Path:
+    for candidate in [start, *start.parents]:
+        if (candidate / '.git').is_dir():
+            return candidate
+    return start
+
+
+DATA_ROOT = os.environ.get('HDB_DATA_ROOT', str(_repo_root(_HERE) / 'hive/t2'))
+IN_PARQUET = f'{DATA_ROOT}/datagovhdb_spark'
+print(f'data root: {DATA_ROOT}')
+
+
+# ── read ──────────────────────────────────────────────────────────────────────
+# The directory, not a file inside it - Spark wrote part-*.parquet plus _SUCCESS
+# and reads the whole directory as one table.
+datagovhdb = spark.read.parquet(IN_PARQUET)
+
+
+# ── aggregate ─────────────────────────────────────────────────────────────────
+
+def build_median_spark(
+    df,
+    *,
+    max_lease=DEFAULT_MAX_LEASE,
+    min_lease=DEFAULT_MIN_LEASE,
+    min_year=DEFAULT_MIN_YEAR,
+    flat_types=DEFAULT_FLAT_TYPES,
+    towns=None,
+    streets=None,
+    min_sales=1,
+):
+    """Spark twin of helper_transform_for_plotly.build_median.
+
+    median() not percentile_approx(): Spark offers both, and the approximate one
+    is the usual reflex for large data. Here the whole point of the shared
+    definition is that every consumer computes the SAME number - an approximate
+    median would make the Spark report and the streamlit app disagree, which is
+    a correctness bug, not a performance trade.
+    """
+    scoped = (
+        df
+        .filter(col('remaining_lease_sold') <= max_lease)
+        .filter(col('remaining_lease_sold') >= min_lease)
+        .filter(col('tx_year') >= min_year)
+        .filter(col('flat_type').isin(list(flat_types)))
+    )
+
+    if towns:
+        scoped = scoped.filter(col('town').isin(list(towns)))
+    if streets:
+        scoped = scoped.filter(col('street_name').isin(list(streets)))
+
+    aggregated = (
+        scoped
+        .groupBy('tx_monthdate', 'flat_type')
+        .agg(
+            median(col('resale_price')).alias('median_price'),
+            count('*').alias('nb_sales'),
+        )
+        .filter(col('nb_sales') >= min_sales)
+        .orderBy('flat_type', 'tx_monthdate')
+    )
+
+    # round to the nearest 1000 for the axis, keep a k-denominated copy for hover.
+    #
+    # bround(), NOT round(). Spark's round() is HALF_UP; polars' .round() is
+    # HALF_EVEN (banker's rounding). With an even number of sales the median
+    # lands on a .5 and the two disagree by exactly 1000 - measured at 21 of 368
+    # rows here, silently, with no error from either engine. bround() is Spark's
+    # HALF_EVEN and takes the mismatch to zero.
+    return aggregated.withColumn(
+        'median_price_k', bround(col('median_price') / 1000, 0)
+    ).withColumn(
+        'median_price', bround(col('median_price') / 1000, 0) * 1000
+    )
+
+
+bq_median = build_median_spark(datagovhdb)
+print(f'aggregated to {bq_median.count():,} rows')
+
+
+# ── collect: the Spark/pandas boundary ────────────────────────────────────────
+# Small by construction (months x flat types). Everything below this line is the
+# original script, unchanged - pandas indexing happens to match polars for the
+# handful of operations the presentation code does (.unique(), .max(), .min()).
+plotter = bq_median.toPandas()
+
+# .toPandas() maps Spark's DateType to python datetime.date objects, giving an
+# `object` dtype column - NOT datetime64. plotly copes, but `.dt` does not exist
+# on object columns, so january_lines() below would fail. Convert once, here at
+# the boundary, rather than defending against it in every consumer.
+plotter['tx_monthdate'] = pd.to_datetime(plotter['tx_monthdate'])
+
+spark.stop()          # nothing below needs Spark; free the JVM
+
+
+def january_lines(plotter):
+    """pandas twin of the polars version - x positions for the year-boundary
+    vlines, sorted explicitly rather than trusting unique()'s ordering."""
+    jan = plotter[plotter['tx_monthdate'].dt.month == 1]['tx_monthdate']
+    return sorted(jan.unique())
 
 
 ############
-#### charts 
+#### charts
 ############
-
 
 
 import plotly.express as px
@@ -46,8 +175,11 @@ import plotly.express as px
 ####### additional information aggregates
 ####################################
 
-# build_median() already returns the rounded median_price and the median_price_k hover column
-plotter = bq_median
+# build_median() already returns the rounded median_price and the median_price_k hover column.
+# NOTE: the polars original assigned `plotter = bq_median` here. In the Spark port
+# plotter was already set above, to bq_median.toPandas() - reassigning it to the
+# Spark DataFrame would send a Column into plotly and fail with the unhelpful
+# "'Column' object is not callable".
 
 # legend/facet order is declared per-figure via category_orders below instead of by
 # re-sorting the dataframe - which means plotter is no longer mutated between the two charts
@@ -276,7 +408,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
 # js_injection = ''   # uncomment to disable
 
-import os
 
 # main_title only goes on the first file - it was one overall page heading,
 # not a per-chart title, and Streamlit's own intro text now covers this anyway.
@@ -294,12 +425,11 @@ def wrap_html(body_content, title=''):
 # each figure now gets its own filename, so Streamlit can show them
 # separately (e.g. with a code snippet placed between each one)
 files_to_write = {
-    '1-firstbq-overlay.html': wrap_html(html_overlay, title=main_title),
-    '1-firstbq-facet.html': wrap_html(html_facet),
-    '1-firstbq-fixedaxis.html': wrap_html(html_fixed_y_axis),
+    '1-firstbq-overlay-spark.html': wrap_html(html_overlay, title=main_title),
+    '1-firstbq-facet-spark.html': wrap_html(html_facet),
+    '1-firstbq-fixedaxis-spark.html': wrap_html(html_fixed_y_axis),
 }
 
-import platform
 
 for filename, content in files_to_write.items():
     if os.environ.get('RUNNING_IN_CONTAINER'):

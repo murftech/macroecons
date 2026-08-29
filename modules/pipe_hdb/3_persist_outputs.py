@@ -3,16 +3,16 @@ import subprocess
 import sys
 
 
-# only the numbered scripts run, and in this order. helper_*.py files are imported by
-# them, not executed - which is why they carry no step number
-scripts = [
-    'modules/pipe_hdb/0_import_datagov.py',
-    'modules/pipe_hdb/2_report_firstbq.py',
-]
+# # only the numbered scripts run, and in this order. helper_*.py files are imported by
+# # them, not executed - which is why they carry no step number
+# scripts = [
+#     'modules/pipe_hdb/0_import_datagov.py',
+#     'modules/pipe_hdb/2_report_firstbq.py',
+# ]
 
-for script in scripts:
-    print(f'\n=== Running {script} ===')
-    result = subprocess.run([sys.executable, script], check=True)
+# for script in scripts:
+#     print(f'\n=== Running {script} ===')
+#     result = subprocess.run([sys.executable, script], check=True)
 
 
 

@@ -9,7 +9,7 @@ sys.path.append('')  # put the repo root on the path, same idiom as 0_import_dat
 # the filtering + aggregation now lives in a module the streamlit app imports too, so both
 # sides compute "median resale price" from one definition. presentation stays here, because
 # this file builds STATIC html (cdn plotly, iframe sizing, tooltip js) that the app doesn't want
-from modules.pipe_hdb.helper_transform_for_plotly import (
+from helper_transform_for_plotly import (
     build_median,
     ceil_tick,
     flat_type_order,

@@ -1,15 +1,22 @@
 [project]
-name = "pipe-hdb-local"
-version = "0.1.0"
-requires-python= '==3.13.*'
+name = 'pipe-hdb-spark'
+version = '0.1.0'
+
+requires-python = '==3.12.*'
 
 dependencies = [
-#    "pysail",
-    "polars",
-    "pandas==2.3.0",
-    "plotly==6.8.0",
-    "requests",
-    "pyarrow",              # polars .to_pandas() / parquet interop
-    "google-cloud-storage", # only used by run_pipeline.py's GCS upload path
-    "boto3",                # only used by run_pipeline.py's S3 upload path
+    'pyspark==4.0.1',
+    'polars',
+    'requests',
+    'pandas',
+    'pyarrow',
+    'plotly',
 ]
+
+
+
+[dependency-groups]
+dev = [
+    "ipython"
+]
+

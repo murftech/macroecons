@@ -6,7 +6,7 @@ version = '0.1.0'
 # MINOR  →  new, backwards-compatible
 # PATCH  →  fixes, no API change
 
-require-python = '3.12.*'
+requires-python = '3.12.*'
 # this matches databricks environment 4,5
 
 dependencies = [
