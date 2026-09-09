@@ -6,6 +6,7 @@
 # !/hive/
 !/modules/pipe_hdb/
 !/modules/pipe_hdb_spark/
+!/modules/pipe_hdb_sparkbricks/
 !/streamlit
 
 
@@ -16,6 +17,7 @@
 !/modules/pipe_hdb/**
 !/streamlit/**
 !/modules/pipe_hdb_spark/**
+!/modules/pipe_hdb_sparkbricks/**
 
 # Allow these specific top-level files
 !/requirements.txt

@@ -62,6 +62,8 @@ if IS_GCP:
         poll_pipeline,
         trigger_pipeline,
     )
+
+
 elif IS_AWS:
     # checked before IS_DOCKER - RUNNING_IN_CONTAINER is true in both the AWS and generic
     # docker-compose images, so AWS must take precedence or this would never be reached
