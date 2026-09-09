@@ -2,6 +2,7 @@
 *
 !*/
 
+
 # Allow everything inside them
 !/cloud_aws_shared/**
 !/cloud_gcp_shared/**
@@ -24,6 +25,18 @@
 !/README.md
 
 # Re-exclude junk inside the allowed trees
+**/*.bak.*
 **/__pycache__/
 **/.DS_Store
-/modules/pipe_hdb/output/
+**/.venv/
+**/venv/
+**/*.egg-info/
+**/*.pyc
+**/.DS_Store
+**/output/
+**/hive/
+**/localdata/
+**/tmp/
+**/datalake/
+**/.Rproj.user/
+**/*.Rhistory
