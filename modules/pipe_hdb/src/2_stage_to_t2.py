@@ -133,7 +133,7 @@ t2.printSchema()
 # databricks. bounds = the exact month window to overwrite (this run's t2 slice).
 n_out, months_in = write_tier(
     t2, tier=TIER, origin=ORIGIN, dataset=DATASET,
-    write_format=args.write_format, part_col='tx_monthdate',
+    write_format=args.write_format, part_cols=['tx_monthdate'],
     bounds=(args.startMonth, args.endMonth),
     spark=spark, args=args)
 

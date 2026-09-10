@@ -41,7 +41,7 @@ def _parse_formats(write_format):
     return formats
 
 
-def write_tier(data, *, tier, origin, dataset, write_format, part_col,
+def write_tier(data, *, tier, origin, dataset, write_format, part_cols,
                columns_contract=None, bounds=None, spark, args):
     """Union the frame(s) and write managed catalog tables, Delta and/or Iceberg.
 
@@ -61,6 +61,9 @@ def write_tier(data, *, tier, origin, dataset, write_format, part_col,
                derive the window from the data itself (bronze - every era is a
                contiguous month block, so the min..max span is exact).
     `columns_contract` : unused here - unionByName handles column alignment.
+    `part_cols` : list; databricks does not physically partition (managed tables get
+               Liquid Clustering). Only part_cols[-1] is used - the column the
+               replaceWhere overwrite span is built on.
     """
     from functools import reduce
     from sparkutils.functions import F
@@ -71,14 +74,16 @@ def write_tier(data, *, tier, origin, dataset, write_format, part_col,
     frames  = data if isinstance(data, list) else [data]
     df_all  = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), frames)
 
-    data_months = sorted(str(r[0]) for r in df_all.select(part_col).distinct().collect())
+    period_col = part_cols[-1]      # databricks doesn't physically partition; this is
+                                    # the column the replaceWhere overwrite span is built on
+    data_months = sorted(str(r[0]) for r in df_all.select(period_col).distinct().collect())
     if bounds is not None:
         lo, hi = f'{bounds[0]}-01', f'{bounds[1]}-01'
     else:
         lo, hi = data_months[0], data_months[-1]
     n_out = df_all.count()
-    print(f'[union] {n_out:,} rows, {part_col} {lo}..{hi}')
-    span = F.expr(f"{part_col} >= DATE'{lo}' AND {part_col} <= DATE'{hi}'")
+    print(f'[union] {n_out:,} rows, {period_col} {lo}..{hi}')
+    span = F.expr(f"{period_col} >= DATE'{lo}' AND {period_col} <= DATE'{hi}'")
 
     FQN = {'delta':   f'{args.catalog}.{tier}.{origin}_{dataset}',
            'iceberg': f'{args.catalog}.{tier}.{origin}_{dataset}_iceberg'}

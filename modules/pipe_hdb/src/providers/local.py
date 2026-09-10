@@ -38,7 +38,7 @@ def _parse_formats(write_format):
     return formats
 
 
-def write_tier(data, *, tier, origin, dataset, write_format, part_col,
+def write_tier(data, *, tier, origin, dataset, write_format, part_cols,
                columns_contract=None, bounds=None, spark=None, args=None):
     """Write one tier as files under datalake/ - parquet dir and/or pyiceberg table.
 
@@ -46,6 +46,9 @@ def write_tier(data, *, tier, origin, dataset, write_format, part_col,
     # catalog tables instead - NOT a path - see providers/databricks.py::write_tier.
 
     `data`     : one Spark DataFrame, or a list of them (per-era, for bronze).
+    `part_cols`: list of partition columns for the parquet dir (hive-nested in list
+                 order). The LAST element is the period column - month span + the
+                 all_months reporting. The iceberg path partitions by one column only.
     `bounds`   : unused locally - the window is already applied by the caller, and
                  both writers delete+append per partition. kept for signature parity.
     `columns_contract` : parquet only - it has no schema evolution, so every frame is
@@ -66,10 +69,11 @@ def write_tier(data, *, tier, origin, dataset, write_format, part_col,
     ICEBERG_PATH = f'datalake/iceberg/{tier}/{origin}/{dataset}'    # where the files physically go
 
     # ---------- parquet dir + pyiceberg, engine-free, per frame ----------
+    period_col = part_cols[-1]      # finest grain = the time axis (month span + all_months)
     total_rows, all_months = 0, set()
     for df in frames:
         arrow_native = df.toArrow()                     # per-frame columns - for iceberg (table evolves)
-        months = sorted({str(v) for v in arrow_native.column(part_col).to_pylist()})
+        months = sorted({str(v) for v in arrow_native.column(period_col).to_pylist()})
         total_rows += arrow_native.num_rows
         all_months.update(months)
         print(f'[{months[0]}..{months[-1]}] {arrow_native.num_rows:,} rows, {len(months)} months')
@@ -80,13 +84,15 @@ def write_tier(data, *, tier, origin, dataset, write_format, part_col,
                 for c in columns_contract:
                     if c not in arrow_out.column_names:
                         arrow_out = arrow_out.append_column(c, pa.nulls(arrow_out.num_rows, pa.string()))
-                arrow_out = arrow_out.select([*columns_contract, part_col])
-            helper_pyarrow_io.write_partitioned(arrow_out, PARQUET_DIR, part_col)
+                arrow_out = arrow_out.select([*columns_contract, *part_cols])
+            helper_pyarrow_io.write_partition(arrow_out, PARQUET_DIR, part_cols)
             print(f'DONE:  parquet -> {PARQUET_DIR}')
 
         if 'iceberg' in formats:
+            if len(part_cols) != 1:
+                raise SystemExit(f"iceberg path partitions by one column; got part_cols={part_cols}")
             helper_iceberg_io.replace_partitions(
-                arrow_native, part_col, table_fqn=ICEBERG_NAME, location=ICEBERG_PATH)
+                arrow_native, part_cols[0], table_fqn=ICEBERG_NAME, location=ICEBERG_PATH)
             print(f'DONE:  iceberg -> {ICEBERG_PATH}')
 
     return total_rows, sorted(all_months)
