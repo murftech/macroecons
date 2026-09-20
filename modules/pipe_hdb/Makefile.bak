@@ -6,9 +6,6 @@ MODULE := modules/pipe_hdb
 RUN    := cd $(ROOT) && $(MODULE)/run.sh
 $(info RUN = $(RUN))
 
-# to run in production:
-# make land ENV=production
-
 .DEFAULT_GOAL := help
 
 .PHONY: setup sync clean clean-t1 clean-t2 land backfill import import-full import-java stage stage-full stage-java report run fresh help

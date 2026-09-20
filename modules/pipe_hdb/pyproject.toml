@@ -32,7 +32,8 @@ dependencies = [
 [dependency-groups]
 
 dev = [
-    "ipython"
+    "ipython",
+    "pytest>=9.1.1",
 ]
 
 databricks = [

@@ -1,6 +1,14 @@
 
 
 
+# from pympler import asizeof
+# asizeof.asizeof(era_dfs) 
+
+# def memsize(python_object):
+
+#     total_bytes = sum(t.nbytes for t in arrow_tables)
+#     mb = total_bytes / 1e6 
+
 
 def add_monthdate(df, selected_col, src_format, new_colname='monthdate'):
 

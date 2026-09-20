@@ -26,6 +26,11 @@ from datetime import date
 import pandas as pd
 
 
+
+from runtime_env import IS_DATABRICKS, IS_IPYTHON, IS_SH, IS_LOCAL, add_src_to_path
+add_src_to_path('modules/pipe_hdb/src')
+
+
 ####################################
 ####### where am I running
 ####################################
@@ -54,8 +59,8 @@ args = parser.parse_args()
 
 ON_DATABRICKS = bool(args.catalog and args.schema)
 
-if args.src_dir:
-    sys.path.insert(0, args.src_dir)
+# if args.src_dir:
+#     sys.path.insert(0, args.src_dir)
 
 
 # pure-Python helpers - no polars inside them, so they port for free

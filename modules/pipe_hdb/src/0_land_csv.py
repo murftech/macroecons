@@ -8,9 +8,9 @@ add_src_to_path('modules/pipe_hdb/src')
 
 # ── PICK THE PROVIDER — the only environment branch in this file ─────────────
 if IS_DATABRICKS:
-    from providers.databricks import add_args, get_landing_dir
+    from providers.databricks import add_provider_args, get_landing_dir
 elif IS_LOCAL:
-    from providers.local import add_args, get_landing_dir
+    from providers.local import add_provider_args, get_landing_dir, ENV
 
 from helper_datagov import fetch_datagov_csv
 
@@ -18,7 +18,7 @@ from helper_datagov import fetch_datagov_csv
 # ── RUNTIME TOGGLES ───────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument('--mode', choices=['update', 'backfill'], default='update')
-add_args(parser)                # databricks: --catalog/--schema/--volume ; local: nothing
+add_provider_args(parser)                # databricks: --catalog/--schema/--volume ; local: --env
 args = parser.parse_args()
 print(args)
 

@@ -1,9 +1,11 @@
 """Engine-free incremental Iceberg write for a partitioned HDB table.
 
 Takes a pyarrow Table (from a Spark DataFrame's .toArrow()) and replaces exactly
-the `partition_col` values it covers - via pyiceberg's delete(predicate) +
-append. Same pattern as flight_prices/modules/helper_iceberg_io.py (clear the
-slice once, append the new rows).
+the `partition_col` values it covers - via pyiceberg's `Table.overwrite(df,
+overwrite_filter=...)`, a delete-matching + append committed as ONE snapshot.
+Same intent as flight_prices/modules/helper_iceberg_io.py (clear the slice
+once, append the new rows), now atomic: a reader sees either the old months
+or the new months, never a gap between them.
 
 The table's schema EVOLVES: a batch carrying a column the table lacks grows the
 table (union by name), and older data reads that column as null. This is the one
@@ -19,7 +21,7 @@ Layout (format-high, matching the parquet/delta siblings):
     datalake/iceberg/<tier>/<schema>/<dataset>/     each table's data + metadata
 
 On Databricks, swap get_catalog() for the Iceberg REST catalog (Unity Catalog's
-endpoint); replace_partitions() is unchanged.
+endpoint); write_partition() is unchanged.
 """
 
 import os
@@ -80,14 +82,16 @@ def get_table(arrow_schema: pa.Schema, partition_col: str,
     return tbl
 
 
-def replace_partitions(arrow_table: pa.Table, partition_col: str,
+def write_partition(arrow_table: pa.Table, partition_col: str,
                        *, table_fqn: str, location: str):
     """Replace exactly the `partition_col` values present in `arrow_table`,
     leaving all other partitions in the table untouched.
 
-    delete(In(...)) drops the rows/files for those partition values; append adds
-    the new ones. Both are one Iceberg snapshot each, so a reader sees either the
-    old month or the new month, never a half-written state.
+    `Table.overwrite(df, overwrite_filter=...)` deletes the rows/files matching
+    the filter AND appends the new ones as ONE atomic commit (one snapshot) -
+    not two separate delete-then-append commits. A reader sees either the old
+    months or the new months, never a gap where the partition is emptied but
+    not yet refilled.
     """
     tbl = get_table(arrow_table.schema, partition_col, table_fqn, location)
 
@@ -97,8 +101,7 @@ def replace_partitions(arrow_table: pa.Table, partition_col: str,
     months = pc.unique(arrow_table.column(partition_col)).to_pylist()
     print(f'[iceberg] replacing {partition_col} partitions: {sorted(str(m) for m in months)}')
 
-    tbl.delete(In(partition_col, months))
-    tbl.append(arrow_table)
+    tbl.overwrite(arrow_table, overwrite_filter=In(partition_col, months))
     return tbl
 
 
@@ -106,7 +109,7 @@ def read(spark, *, table_fqn: str, location: str = None):
     """Read an Iceberg table back as a Spark DataFrame - pyiceberg scan -> arrow ->
     spark.createDataFrame. Engine-free / Sail-safe: the JVM Iceberg reader is not
     available on Sail. `location` is unused (the catalog resolves it) - kept for
-    call-site symmetry with replace_partitions().
+    call-site symmetry with write_partition().
     """
     tbl = get_catalog().load_table(table_fqn)
     return spark.createDataFrame(tbl.scan().to_arrow())

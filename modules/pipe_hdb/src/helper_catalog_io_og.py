@@ -6,7 +6,7 @@ BigLake), EMR. The catalog wiring is get_spark()'s job; this module assumes `fqn
 already resolves to a real catalog.
 
 Does NOT run on Sail (Rust, no JVM, no Delta/Iceberg JARs) - that is why the
-path-based helpers (helper_pyarrow_io, helper_iceberg_io) stay separate.
+path-based helpers (helper_pyarrow_io, helper_pyiceberg_io) stay separate.
 
 writeTo(...) semantics:
   .using(fmt).create()   first run - CREATE the table. no partitionBy: Databricks
@@ -23,7 +23,7 @@ writeTo(...) semantics:
 def align_down(df, target_schema):
     """Reindex `df` to `target_schema`: add columns the table has but `df` lacks as
     typed nulls, then select in the table's column order. Same idea as
-    helper_iceberg_io._align_to_table, for Spark schemas.
+    helper_pyiceberg_io._align_to_table, for Spark schemas.
 
     Alignment only ever goes DOWN - the first write to a fresh table defines its
     schema, and an incoming batch that carries FEWER columns (e.g. 1990-2014 HDB

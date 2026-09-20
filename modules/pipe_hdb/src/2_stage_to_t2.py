@@ -10,9 +10,9 @@ add_src_to_path('modules/pipe_hdb/src')
 ## NEW ###
 # ── PICK THE PROVIDER — the only environment branch in this file ─────────────
 if IS_DATABRICKS:
-    from providers.databricks import add_args, get_spark_engine, read_tier, write_tier
+    from providers.databricks import add_provider_args, provider_overwrite_spark_engine, read_tier, dispatch_write
 elif IS_LOCAL:
-    from providers.local import add_args, get_spark_engine, read_tier, write_tier
+    from providers.local import add_provider_args, provider_overwrite_spark_engine, read_tier, dispatch_write
 
 from helper_transit import sortcount
 
@@ -31,7 +31,7 @@ parser.add_argument('--spark_engine', choices=['sail', 'java'], default='sail')
 parser.add_argument('--write_format', default='parquet,iceberg',
                     help="comma-separated: parquet,delta,iceberg. local writes parquet+iceberg; "
                          "databricks writes delta+iceberg (deploy passes --write_format delta,iceberg)")
-add_args(parser)                # databricks: --catalog/--schema/--volume ; local: nothing
+add_provider_args(parser)                # databricks: --catalog/--schema/--volume ; local: --env
 args = parser.parse_args()
 
 # ── INLINE OVERWRITES (laptop dev only) ──────────────────────────────────────
@@ -44,9 +44,9 @@ if IS_IPYTHON:
     # args.write_format = 'parquet,iceberg'
     # print(args)
 
-# resolve the engine ONCE, here: get_spark_engine() returns 'java' on databricks, passes
+# resolve the engine ONCE, here: provider_overwrite_spark_engine() returns 'java' on databricks, passes
 # --spark_engine through locally. below this line args.spark_engine IS the live engine.
-args.spark_engine = get_spark_engine(args.spark_engine)
+args.spark_engine = provider_overwrite_spark_engine(args.spark_engine)
 
 
 print(args)
@@ -131,9 +131,9 @@ t2.printSchema()
 ############### WRITE ###############
 # provider owns the fork: files under datalake/ locally, managed catalog tables on
 # databricks. bounds = the exact month window to overwrite (this run's t2 slice).
-n_out, months_in = write_tier(
+n_out, months_in = dispatch_write(
     t2, tier=TIER, origin=ORIGIN, dataset=DATASET,
-    write_format=args.write_format, part_cols=['tx_monthdate'],
+    write_format=args.write_format, partition_keys=['tx_monthdate'],
     bounds=(args.startMonth, args.endMonth),
     spark=spark, args=args)
 

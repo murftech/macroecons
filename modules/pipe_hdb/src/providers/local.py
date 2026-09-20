@@ -1,27 +1,49 @@
-"""Local / docker provider - relative paths under datalake/, plain file IO.
+"""Local / docker provider - MasterETL/{ENV}/lakehouse, plain file IO.
 
-Covers IS_SH (run.sh, docker) and IS_IPYTHON (hand-run in a kernel). Both
-write to the same place, so there is no split in here.
+ENV is resolved per-call via args.env (see add_provider_args -> --env), not a
+module constant - lets a script override dev/production per-invocation
+instead of only via the shell's ENV var, without needing that var set
+beforehand.
 """
+import os
+from pathlib import Path
+
+# seeds --env's default only (see add_provider_args) - ENV=production python
+# script.py ... still works with no flag; args.env is the real source of
+# truth from here on.
+ENV = os.environ.get('ENV', 'dev')
+
+CATALOG_NAME = 'macroecons'
+
+def get_lakehouse_root_from_env(env):
+    if env not in ('dev', 'production'):
+        raise ValueError(f"env must be 'dev' or 'production', got {env!r}")
+
+    resolved_lakehouse = Path(f'/Users/murftech/Root/MasterETL/{env}/lakehouse')
+    return resolved_lakehouse
 
 
-def add_args(parser):
-    '''stub'''
+def add_provider_args(parser):
+    print('\n\n')
+    added = [
+        parser.add_argument('--env', default=ENV, choices=('dev', 'production'),
+                             help="which lakehouse to target - defaults to the ENV env var (itself defaulting to 'dev')"),
+        # parser.add_argument('--something_else', ...),
+    ]
+    print('args_added:', [a.option_strings[0] for a in added])
 
 
-def get_spark_engine(requested):
+
+def provider_overwrite_spark_engine(requested):
     """Local honours whatever --spark_engine asked for (sail or java) - pass it through.
-    NOT a no-op like add_args: the script needs a real engine string back."""
+    NOT a no-op like add_provider_args: the script needs a real engine string back."""
     return requested
 
 
 def get_landing_dir(args, origin, dataset):
     """Where 0_land_csv.py drops the raw CSVs (and 1_import_to_t1.py reads them).
-
-    Relative on purpose - run.sh cd's to the repo root before invoking the script.
-    `args` is unused locally; kept for signature parity with the databricks provider.
     """
-    return f'datalake/landing/{origin}/{dataset}'
+    return str(get_lakehouse_root_from_env(args.env) / 'landing' / origin / dataset)
 
 
 _KNOWN_FORMATS     = {'parquet', 'delta', 'iceberg'}
@@ -38,38 +60,43 @@ def _parse_formats(write_format):
     return formats
 
 
-def write_tier(data, *, tier, origin, dataset, write_format, part_cols,
-               columns_contract=None, bounds=None, spark=None, args=None):
-    """Write one tier as files under datalake/ - parquet dir and/or pyiceberg table.
+def dispatch_write(data, *, tier, origin, dataset, write_format, partition_keys,
+               on_newcols='evolve', on_missingcols='pad_null',
+               bounds=None, spark=None, args=None):
 
-    # TARGET (local only): t1/t2 are FILES here. on Databricks they are managed
-    # catalog tables instead - NOT a path - see providers/databricks.py::write_tier.
+    '''
+    1. Which engine(s) to write to at all
+    2. Handling more than one frame
+    3. Deciding what order to write frames in
+    4. Unifying table write addresses from tier, origin, dataset - all under
+       get_lakehouse_root_from_env(args.env) now, following the readme's Warehouse ROOT >
+       Catalog > Tier > Table convention for BOTH formats, not just iceberg.
+    '''
 
-    `data`     : one Spark DataFrame, or a list of them (per-era, for bronze).
-    `part_cols`: list of partition columns for the parquet dir (hive-nested in list
-                 order). The LAST element is the period column - month span + the
-                 all_months reporting. The iceberg path partitions by one column only.
-    `bounds`   : unused locally - the window is already applied by the caller, and
-                 both writers delete+append per partition. kept for signature parity.
-    `columns_contract` : parquet only - it has no schema evolution, so every frame is
-                 padded up to this fixed column list. iceberg evolves its own schema
-                 (that is the one thing it gives you here a bare parquet dir cannot),
-                 so it gets the per-frame columns untouched.
-    `spark` / `args` : unused locally - kept for signature parity with databricks.
-    """
-    import pyarrow as pa
-    import helper_pyarrow_io
-    import helper_iceberg_io
-
+    lakehouse_root = get_lakehouse_root_from_env(args.env)
     formats = _parse_formats(write_format)
-    frames  = data if isinstance(data, list) else [data]
+    frames  = list(data.values()) if isinstance(data, dict) else data if isinstance(data, list) else [data]
 
-    PARQUET_DIR  = f'datalake/hive/{tier}/{origin}/{dataset}'
-    ICEBERG_NAME = f'{tier}.{origin}__{dataset}'                    # catalog identity: catalog.schema__table
-    ICEBERG_PATH = f'datalake/iceberg/{tier}/{origin}/{dataset}'    # where the files physically go
+    # widest schema first - the frame with the most columns establishes the
+    # destination's full width on write #1, so every later (narrower) frame
+    # just needs on_missingcols='pad_null'.
+    frames = sorted(frames, key=lambda df: -len(df.toArrow().schema.names))
+
+    if 'parquet' in formats:
+        import helper_pyarrow_io
+        PARQUET_DIR = str(lakehouse_root / 'hive' / CATALOG_NAME / tier / f'{origin}__{dataset}')
+
+    if 'iceberg' in formats:
+        import helper_pyiceberg_io
+        ICEBERG_WAREHOUSE = lakehouse_root / 'iceberg' / CATALOG_NAME   # the Catalog layer lives IN the warehouse path itself for iceberg
+        ICEBERG_NAMESPACE = tier
+        ICEBERG_TBL_NAME  = f'{origin}__{dataset}'
+        ICEBERG_FQN       = f'{ICEBERG_NAMESPACE}.{ICEBERG_TBL_NAME}'
+        iceberg_catalog = helper_pyiceberg_io.getOrCreate_catalog(ICEBERG_WAREHOUSE)
+        iceberg_catalog.create_namespace_if_not_exists(ICEBERG_NAMESPACE)
 
     # ---------- parquet dir + pyiceberg, engine-free, per frame ----------
-    period_col = part_cols[-1]      # finest grain = the time axis (month span + all_months)
+    period_col = partition_keys[-1]      # finest grain = the time axis (month span + all_months)
     total_rows, all_months = 0, set()
     for df in frames:
         arrow_native = df.toArrow()                     # per-frame columns - for iceberg (table evolves)
@@ -79,21 +106,16 @@ def write_tier(data, *, tier, origin, dataset, write_format, part_cols,
         print(f'[{months[0]}..{months[-1]}] {arrow_native.num_rows:,} rows, {len(months)} months')
 
         if 'parquet' in formats:
-            arrow_out = arrow_native
-            if columns_contract:
-                for c in columns_contract:
-                    if c not in arrow_out.column_names:
-                        arrow_out = arrow_out.append_column(c, pa.nulls(arrow_out.num_rows, pa.string()))
-                arrow_out = arrow_out.select([*columns_contract, *part_cols])
-            helper_pyarrow_io.write_partition(arrow_out, PARQUET_DIR, part_cols)
+            helper_pyarrow_io.write_partition_guarded(
+                arrow_native, PARQUET_DIR, partition_keys,
+                on_newcols=on_newcols, on_missingcols=on_missingcols)
             print(f'DONE:  parquet -> {PARQUET_DIR}')
 
         if 'iceberg' in formats:
-            if len(part_cols) != 1:
-                raise SystemExit(f"iceberg path partitions by one column; got part_cols={part_cols}")
-            helper_iceberg_io.replace_partitions(
-                arrow_native, part_cols[0], table_fqn=ICEBERG_NAME, location=ICEBERG_PATH)
-            print(f'DONE:  iceberg -> {ICEBERG_PATH}')
+            helper_pyiceberg_io.write_partition_guarded(
+                arrow_native, iceberg_catalog, ICEBERG_FQN, partition_keys,
+                on_newcols=on_newcols, on_missingcols=on_missingcols)
+            print(f'DONE:  iceberg -> {ICEBERG_FQN}')
 
     return total_rows, sorted(all_months)
 
@@ -102,15 +124,18 @@ def read_tier(spark, args, *, tier, origin, dataset, fmt='parquet'):
     """Read a persisted tier back as a Spark DataFrame. `fmt` defaults to 'parquet'
     (the canonical local copy, and the only one Sail can read directly); pass
     fmt='iceberg' to read the pyiceberg copy instead (scan -> arrow -> createDataFrame,
-    also Sail-safe). `args` unused locally - kept for signature parity with databricks.
+    also Sail-safe). `args.env` selects dev vs production, same as dispatch_write.
     """
     import helper_pyarrow_io
-    import helper_iceberg_io
+    import helper_pyiceberg_io
+
+    lakehouse_root = get_lakehouse_root_from_env(args.env)
 
     if fmt == 'parquet':
-        return helper_pyarrow_io.read(spark, f'datalake/hive/{tier}/{origin}/{dataset}')
+        parquet_dir = str(lakehouse_root / 'hive' / CATALOG_NAME / tier / f'{origin}__{dataset}')
+        return helper_pyarrow_io.read(spark, parquet_dir)
     if fmt == 'iceberg':
-        return helper_iceberg_io.read(
-            spark, table_fqn=f'{tier}.{origin}__{dataset}',
-            location=f'datalake/iceberg/{tier}/{origin}/{dataset}')
+        iceberg_catalog = helper_pyiceberg_io.getOrCreate_catalog(lakehouse_root / 'iceberg' / CATALOG_NAME)
+        return helper_pyiceberg_io.sail_read_iceberg(
+            spark, iceberg_catalog, table_fqn=f'{tier}.{origin}__{dataset}')
     raise SystemExit(f"read_tier fmt must be 'parquet' or 'iceberg', got {fmt!r}")

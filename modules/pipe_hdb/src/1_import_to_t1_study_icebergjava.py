@@ -1,16 +1,25 @@
 ###### IMPORT  ######
 from pathlib import Path
-import sys
+import sys, os
 import argparse
+
+# must be set before ANY SparkSession is created (driver vs worker Python
+# version mismatch otherwise breaks any DataFrame operation that runs a
+# Python worker) - verified needed this exact way during helper_sparkcatalog_io's
+# own validation run this session.
+os.environ.setdefault('PYSPARK_PYTHON', sys.executable)
+os.environ.setdefault('PYSPARK_DRIVER_PYTHON', sys.executable)
 
 from runtime_env import IS_DATABRICKS, IS_IPYTHON, IS_SH, IS_LOCAL, add_src_to_path
 add_src_to_path('modules/pipe_hdb/src')
 
+## NEW ###
 # ── PICK THE PROVIDER — the only environment branch in this file ─────────────
 if IS_DATABRICKS:
     from providers.databricks import add_provider_args, provider_overwrite_spark_engine, get_landing_dir, dispatch_write
 elif IS_LOCAL:
-    from providers.local import add_provider_args, provider_overwrite_spark_engine, get_landing_dir, dispatch_write, ENV
+    from providers.local import add_provider_args, provider_overwrite_spark_engine, get_landing_dir, dispatch_write
+
 
 '''
 Q: why is a import csv into warehouse as is seems to have such a long script?
@@ -41,36 +50,27 @@ parser.add_argument('--write_format', default='parquet,iceberg',
                          "databricks writes delta+iceberg (deploy passes --write_format delta,iceberg)")
 parser.add_argument('--eras', default='2017_onwards',
                     help="comma-separated era keys or 'all'. currently available eras: " + ','.join(ERA_CONTRACTS))
-
 add_provider_args(parser)                # databricks: --catalog/--schema/--volume ; local: --env
-
-
-print('\n\n')
 args = parser.parse_args()
-
-# resolve the engine ONCE, here: provider_overwrite_spark_engine() returns 'java' on DATABRICKS, passes
-# --spark_engine through locally. below this line args.spark_engine IS the live engine.
-args.spark_engine = provider_overwrite_spark_engine(args.spark_engine)
-# sub:  to use some classes or whatever thing to make this not run
-
-print(f'resolved args: {args}')
+print(args)
 
 
 # ── INLINE OVERWRITES (laptop dev only) ──────────────────────────────────────
 if IS_IPYTHON:
-    # args.spark_engine = 'java'
-    args.spark_engine = 'sail'
-    # args.eras = '1990_1999,2000_2012Feb,2015_2016'
-    args.eras = 'all'
-    # args.write_format = 'iceberg'
-    args.write_format = 'parquet,iceberg'
+    args.spark_engine = 'java'
+    # args.spark_engine = 'sail'
     # args.write_format = 'parquet'
-    print(f'overwritten final args: {args}')
+    # args.eras = '1990_1999,2000_2012Feb,2015_2016'
+    args.eras = '2015_2016'
+    # args.eras = 'all'
+    args.write_format = 'iceberg'
+    # args.write_format = 'parquet,iceberg'
+    # print(args)
 
-print(f'resolved: environment: {ENV}')
+# resolve the engine ONCE, here: provider_overwrite_spark_engine() returns 'java' on databricks, passes
+# --spark_engine through locally. below this line args.spark_engine IS the live engine.
+args.spark_engine = provider_overwrite_spark_engine(args.spark_engine)
 
-
-print('\n\n\n ######## BEGIN LOGIC ###########')
 
 # ── VALIDATE ERA PARAMETER ─────────────────────────────────────────────────────────
 
@@ -91,6 +91,30 @@ if unknown:
 
 
 # ── START SPARK ───────────────────────────────────────────────────────────────
+# helper_sparkcatalog_io needs a REAL Iceberg-JVM catalog - a Spark session
+# with the iceberg-spark-runtime JAR + a local Hadoop catalog configured. That
+# has to happen BEFORE get_spark() ever runs: JAR loading only takes effect at
+# JVM startup, and get_spark() itself already knows how to ADOPT a
+# pre-existing session rather than creating a fresh one (see its own
+# "Spark session already provided by environment" branch) - so pre-configuring
+# it here, then calling get_spark() as normal, needs zero edits to sparkutils.
+# Only do this for engine='java' + write_format containing 'iceberg' - Sail
+# can't load JVM JARs at all, and there's no reason to pay the JAR-download
+# cost for a run that isn't going to touch helper_sparkcatalog_io.
+ICEBERG_WAREHOUSE_JVM = 'datalake/iceberg_jvm'   # deliberately separate from datalake/iceberg (the pyiceberg SqlCatalog) - two independent catalogs, zero collision risk even if a table name repeats
+if args.spark_engine == 'java' and 'iceberg' in args.write_format.split(','):
+    from pyspark.sql import SparkSession
+    (
+        SparkSession.builder
+        .appName('1_import_to_t1')
+        .config('spark.jars.packages', 'org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.0')
+        .config('spark.sql.extensions', 'org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions')
+        .config('spark.sql.catalog.local_iceberg', 'org.apache.iceberg.spark.SparkCatalog')
+        .config('spark.sql.catalog.local_iceberg.type', 'hadoop')
+        .config('spark.sql.catalog.local_iceberg.warehouse', ICEBERG_WAREHOUSE_JVM)
+        .getOrCreate()
+    )
+
 from sparkutils.getspark import get_spark, stop_spark
 spark = get_spark('1_import_to_t1', args.spark_engine)
 from sparkutils.functions import col, lit, when, to_date, year, F
@@ -98,7 +122,7 @@ from sparkutils.functions import col, lit, when, to_date, year, F
 
 # ── DATALAKE LAYOUT ───────────────────────────────────────────────────────────────────
 
-ORIGIN, DATASET, TIER = 'datagov', 'resale_flat_prices', 't1'
+ORIGIN, DATASET, TIER = 'datagov', 'resale_flat_prices', 't1_jvm'
 
 # SOURCE: where the landed CSVs are read from
 LANDING_DIR = get_landing_dir(args, ORIGIN, DATASET)
@@ -188,6 +212,7 @@ if not era_dfs:
 # # write_partition_guarded?
 
 # write_partition_guarded(
+
 #     data_old.toArrow(), catalog, 't1.datagov__resale_flat_prices', partition_cols,
 #     on_newcols='evolve', on_missingcols='pad_null')
 # write_partition_guarded(
@@ -212,12 +237,35 @@ if not era_dfs:
 # write_partition_guarded(data_new.toArrow(), PATH_TO_TABLE, partition_cols, show_partitions=False, on_newcols='evolve', on_missingcols='pad_null')
 
 
-# ── real production write - on_newcols/on_missingcols default to ('evolve', 'pad_null')
-#    inside dispatch_write now - T1's own stated priority is never losing data. ──
+# ── STUDY: exercise helper_sparkcatalog_io directly, bypassing dispatch_write ──
+# dispatch_write doesn't route java-engine iceberg writes to helper_sparkcatalog_io
+# yet (that wiring is a deliberate, separate, not-yet-done integration step) -
+# so this calls it directly, same "study" pattern as the commented-out block
+# above did for helper_pyiceberg_io before dispatch_write existed at all.
 
-dispatch_write(era_dfs, tier=TIER, origin=ORIGIN, dataset=DATASET,
-           write_format=args.write_format, partition_keys=[COMPUTED_PARTITION],
-           bounds=None, spark=spark, args=args)
+import importlib, helper_sparkcatalog_io
+importlib.reload(helper_sparkcatalog_io)
+from helper_sparkcatalog_io import create_table, write_partition_guarded
+
+partition_keys = [COMPUTED_PARTITION]
+FQN = f'local_iceberg.{TIER}.{ORIGIN}__{DATASET}'
+
+spark.sql(f'CREATE NAMESPACE IF NOT EXISTS local_iceberg.{TIER}')
+
+# widest schema first, same reasoning dispatch_write itself uses: the first
+# write into an empty table defines its width, so later (narrower) eras only
+# ever need on_missingcols='pad_null', never on_newcols territory.
+ordered_eras = sorted(era_dfs.values(), key=lambda df: -len(df.columns))
+
+if not spark.catalog.tableExists(FQN):
+    create_table(ordered_eras[0], spark, FQN, partition_keys)
+    ordered_eras = ordered_eras[1:]   # that first frame is already written by create_table
+
+for df in ordered_eras:
+    write_partition_guarded(df, spark, FQN, partition_keys,
+                            on_newcols='evolve', on_missingcols='pad_null')
+
+print(f'DONE: {FQN} now has {spark.table(FQN).count():,} rows')
 
 
 # ── EXIT ─────────────────────────────────────────────

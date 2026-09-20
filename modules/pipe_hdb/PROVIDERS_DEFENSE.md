@@ -427,3 +427,218 @@ what differs (catalog config, FQN convention) is `get_spark`'s job, not the writ
 ### Ordering
 Phase 2 first (safe, self-contained, the concrete win). Phase 3 additive. 4–5 are the reshape,
 depend on 1–3. 0c gates only the iceberg-evolution *decision*, not the extraction.
+
+---
+
+## Phase 6 expanded: `helper_pyiceberg_io.py` cleanup (captured 2026-09-11)
+
+Fleshes out the one-liner "de-hdb helper_pyiceberg_io" above. Sequenced plan, from the
+hands-on partition-spec / schema-evolution study session:
+
+1. **DECIDED — split catalog + namespace provisioning out of `get_table()`.** Currently
+   `cat.create_namespace(namespace)` happens silently inline, on every call, wrapped in a
+   swallow-all `try/except`. Make provisioning (catalog + namespace) its own explicit step,
+   never implicit inside "get me a table."
+2. **DISCUSS — redesign `get_table()` → `get_or_create_table()` / `expose_table()`.** Compare
+   to pyarrow's `write_dataset`, which needs no "does it exist" ceremony at all - it just
+   writes, empty dir or not. Aiming for a cleaner get/create split (rough 70/30 weighting)
+   instead of the current one long try/except chain. Naming and exact shape not settled.
+3. **DECIDED — the core write path (`expose_table(fqn)` -> build partition filter ->
+   `tbl.overwrite(...)`) stays STRICT, no schema evolution.** Keep it simple/testable in
+   isolation first.
+4. **DECIDED — schema evolution becomes its own explicit function, `write_evolution()`** -
+   not bolted onto every write by default (unlike the current `write_partition`, which always
+   calls `_evolve_schema` + `_align_to_table`). If evolution fails, fail loud - "sound out
+   first" - don't swallow it.
+5. **PARK — before hand-rolling evolution guards, check what pyiceberg already enforces
+   natively.** Same 4 checks `write_partition_guarded` does on the pyarrow side (partition-key
+   match / missing cols / new cols / type change). Already have empirical evidence from this
+   session's "naughty" tests of what pyiceberg catches on its own. Where iceberg already
+   guards itself, write the finding down and make the Databricks provider rely on the same
+   native guarantee instead of re-implementing pyarrow-style checks that aren't needed.
+6. **Q — `write_evolution()` flagged as genuinely hard.** Once understood, may hand this one
+   to Claude to implement directly rather than hand-write, unlike the rest of this session's
+   hands-on style.
+7. **PARK — longer-term target: local JVM Iceberg, then all the way through to Databricks.**
+   Scoped to the strict/no-evolution path first; evolution testing on JVM/Databricks deferred
+   until `write_evolution()` itself is understood and built.
+
+   **When this gets picked up (2026-09-13):** point local JVM Iceberg (Java `JdbcCatalog`,
+   e.g. via a local Spark session) at the *same* `_icebergcatalog.db` + warehouse dir pyiceberg
+   already uses - **hard constraint: never duplicate the warehouse.** One set of parquet data
+   files + manifests, shared between pyiceberg and JVM Iceberg, always.
+
+   Reasoning this rests on (verify empirically before trusting, not yet tested with a real
+   JVM): Iceberg's table format (metadata.json/manifests/data files) is language-agnostic, so
+   the warehouse itself is safely shareable no matter what. The catalog is the less-certain
+   part - pyiceberg's `SqlCatalog` and Java's `JdbcCatalog` are both implementations of the
+   same JDBC-catalog convention and likely share the same `iceberg_tables` schema (confirmed
+   columns: `catalog_name`, `table_namespace`, `table_name`, `metadata_location`,
+   `previous_metadata_location`) - but pyiceberg has a "v0 vs v1" schema-version distinction
+   (`_init_catalog()` in `pyiceberg/catalog/sql.py`) that Java's implementation may not match
+   exactly, and the sqlite JDBC driver (`org.xerial:sqlite-jdbc`) needs to be added to the JVM
+   classpath manually.
+
+   **Also test (added 2026-09-13, from the "overwrite is 2 commits" finding above).**
+
+   **Acceptance criterion - the one conclusion this test needs to produce:** replace an
+   already-populated partition via real local JVM Iceberg (`df.writeTo(table).overwritePartitions()`),
+   then run the same check used to find this in pyiceberg -
+   ```python
+   for entry in tbl.history():
+       snap = tbl.metadata.snapshot_by_id(entry.snapshot_id)
+       print(entry.snapshot_id, snap.summary.operation, snap.parent_snapshot_id)
+   ```
+   - **1 new snapshot** (a single commit covering both the removed and added files) -> JVM
+     Iceberg is atomic here, pyiceberg's 2-commit behavior is confirmed pyiceberg-specific.
+   - **2 new snapshots** (DELETE then APPEND, same shape as pyiceberg) -> the gap is an
+     Iceberg-format/protocol-level reality, not a pyiceberg bug, and every writer path
+     (including Databricks) needs to be assumed to have the same reader-visible gap.
+
+   Leading hypothesis is "1" (Java's older, more optimized `OverwriteFiles` API vs pyiceberg's
+   younger, independent reimplementation) - but that's an informed guess, not yet verified
+   against a real JVM in this environment. This test is what actually settles it either way.
+
+   **Test order:** read-only first (`spark.sql("SELECT * FROM jdbc_catalog.t1.resale_flat_prices")`)
+   before ever writing from both sides - proves compatibility at zero risk. Any bugs that turn
+   up get reconciled between the two catalog implementations (schema-version mismatch, path/URI
+   format differences, etc.) rather than worked around by giving JVM Iceberg its own separate
+   warehouse copy - the whole point is one shared source of truth, not two catalogs each with
+   their own datasets to keep in sync.
+
+---
+
+## `write_partition_guarded()` check #5 (type change) gap - review (2026-09-13)
+
+**Verified empirically, corrects an earlier wrong claim:** iceberg's native
+`_check_pyarrow_schema_compatible` does NOT silently allow "safe" numeric widening
+(int32 table -> int64 incoming data) - it rejects it, same mechanism and same error
+shape as any other type mismatch. So there's no case where our check #5 is *stricter*
+than iceberg for numeric widening - they're aligned. (Originally claimed the opposite;
+disproven by a clean, isolated test - logging the corrected finding, not the wrong one.)
+
+**What the same test actually found, real gap worth reviewing:** iceberg's native check
+also rejects a REQUIRED-vs-optional mismatch on an otherwise-identical column (same
+`.type`, different nullability) - confirmed via a clean test (`era: required string` vs
+incoming `era: optional string`, `ValueError: Mismatch in fields`). But our own check #5
+only compares `old_schema.field(n).type != incoming.field(n).type` - it never looks at
+`.nullable`/required-ness at all. So a same-typed, nullability-only mismatch currently
+falls into the "loud" bucket (iceberg catches it) *by accident*, not because it's one of
+the five named checks - unlike every other loud case, which we deliberately chose to make
+explicit anyway (see write_partition_guarded()'s docstring). Decide: add an explicit
+sixth check for nullability mismatches (mirroring check #5's shape), or leave it as an
+unnamed case iceberg happens to catch on its own.
+
+---
+
+## CRITICAL: tbl.overwrite() is NOT a single atomic commit - it's two (2026-09-13)
+
+**Corrects a foundational claim stated as fact since early this session.** `write_partition()`'s
+docstring used to say `overwrite(df, overwrite_filter=...)` does the delete + append "as ONE
+atomic commit (one snapshot)... never a gap where the partition is emptied but not yet
+refilled." That claim is WRONG for this pyiceberg version, verified by direct testing, not
+assumed.
+
+**What actually happens**, confirmed via `tbl.history()` + per-snapshot `.summary.operation`:
+a call to `write_partition()`/`overwrite()` against a partition that already has matching
+data produces **two separate snapshots**, not one:
+```
+snapshot N    op=DELETE   (removes the old matching file(s))
+snapshot N+1  op=APPEND   (adds the new file(s))    <- current_snapshot() after the call
+```
+(A *first-ever* write to a partition with nothing to delete only produces one - the append -
+which is why this went unnoticed for so long; every verification test this session happened
+to be a fresh table or a fresh partition value.)
+
+**The gap is real and reader-visible**, not just an implementation curiosity - confirmed
+directly:
+```python
+mid_snapshot_id = tbl.history()[-2].snapshot_id   # the DELETE snapshot
+tbl.scan(snapshot_id=mid_snapshot_id).to_arrow().to_pylist()
+# -> []  (the partition is genuinely, visibly EMPTY at this point in history)
+```
+Any concurrent reader (a dashboard, a Databricks SQL warehouse, an analyst query, another
+pipeline stage) that happens to query the table in the ~5-50ms window between these two
+commits sees the partition as empty - real, if narrow, data loss from the reader's
+perspective. This is exactly the failure mode the original (wrong) docstring claimed was
+architecturally impossible.
+
+**Not yet investigated - next step if this matters for real concurrent access:** whether
+pyiceberg's lower-level `Transaction` API (`with tbl.transaction() as txn: txn.delete(...);
+txn.append(...)`, committing once at context-exit) produces a genuinely single commit where
+the convenience `tbl.overwrite()` wrapper doesn't - untested, a real hypothesis worth checking
+before assuming this can't be fixed. Given this project's actual usage pattern is a batch
+pipeline (writer runs, finishes, then readers query - not continuous concurrent access), this
+may be low real-world risk today, but it's a correctness gap worth knowing about explicitly
+rather than continuing to believe the disproven "one atomic commit" claim.
+
+---
+
+## `write_partition_guarded` unit tests - NON-NEGOTIABLE (2026-09-15)
+
+**Why:** `write_partition_guarded` (both `helper_pyarrow_io.py` and `helper_pyiceberg_io.py`)
+now has real branching surface - `on_newcols` (`'evolve'/'push'`, `'drop'`, `'error'`) x
+`on_missingcols` (`'pad_null'`, `'error'`), plus check 0 (null partition keys, always-on),
+plus two near-identical engine implementations that have to stay in sync. Already found one
+real gap by hand in the REPL (the original block 5 demo never actually exercised `pad_null` -
+`on_newcols='error'` on the first call prevented the table from ever getting wide enough to
+have anything genuinely missing). Without tests, the next edit to either helper has no way to
+prove it didn't silently break one of the other paths.
+
+Also the difference between "documented" and "not a black box to another engineer": a
+docstring describes intended behavior and has to be trusted; a passing test proves it, re-
+verified on every run.
+
+**Task: learn how to write unit tests** (pytest), using this exact surface as the vehicle -
+`modules/pipe_hdb/src/unit_tests/1_import_to_t1 unit_test_for_write_partition_guarded.py`
+already exists as the REPL-demo starting point, not yet real pytest.
+
+Shape to convert into:
+- `tmp_path` fixture (pytest's own disposable temp dir) instead of `datalake/hive/...` or
+  `datalake/iceberg` - fresh every test, auto-cleaned, no `double_safe_purge` /
+  interactive-confirmation problem, no shared state between runs or test order dependence.
+- `@pytest.mark.parametrize` over the 6 `(on_newcols, on_missingcols)` combos instead of 6
+  near-duplicate hand-written blocks - one test function, one source of truth for what each
+  combo is expected to do.
+- Fix the block-5 gap in the conversion, not just carry it forward: that block needs its own
+  widen-first setup call (`evolve`), not the shared `_reset_demo_table()` (which always resets
+  to the narrow `data_old` schema), before the two calls that actually assert `error`/`pad_null`.
+- Cover check 0 (null partition key) and check 4 (type mismatch) too, not just the two
+  behaviour toggles - both are currently only verified by one-off scratch runs earlier this
+  session, not committed tests.
+- Mirror the same test shape across both `helper_pyarrow_io` and `helper_pyiceberg_io` -
+  the whole point of today's renames (`on_newcols`/`on_missingcols`/`'error'` identical in
+  both) was to make this possible without two different test vocabularies.
+
+---
+
+## Separate checker-print stdout from computational noise - PARKED, reverted (2026-09-18)
+
+**The problem, real and still open:** the new diagnostic "checker" prints added this session
+(`args_added: [...]` in `add_provider_args`, `resolved args: {args}` in `1_import_to_t1.py`,
+`[provision] env=... -> ...` in `0_run_pyiceberg_provision.py`) get visually lost inside the
+much heavier computational stdout a real run produces (Spark schema printouts, per-era row
+counts, pyiceberg/pyarrow chatter). Confirmed directly from a real IPython run's output.
+
+**Proposed fix, worked through but not applied:**
+1. Route only the checker prints to `sys.stderr` (`print(..., file=sys.stderr)`) - leaves
+   every pre-existing business-logic print (row counts, era lists, `RUNTIME SUMMARY`, etc.)
+   untouched on stdout, since those ARE wanted at runtime, just not what's getting lost.
+2. In `run.sh`, wrap the whole `case "$CALL_TASK" in ... esac` block in a single
+   `{ ... } 1>"$LOG_FILE"` group - ONE redirect point that every entry path (every `make`
+   target via `$(RUN)`, and any direct `./run.sh <task>` call) automatically inherits, no
+   per-target Makefile edits needed. stderr (the checker prints) stays live in the terminal;
+   stdout (the noisy stream) gets captured to `run.log`. The `*)` usage-error block already
+   prints via `cat >&2`, so it's unaffected by the stdout-only redirect either way.
+
+**Status: reverted, not applied.** Step 2 was implemented in `run.sh` and immediately reverted
+at the user's explicit instruction ("i dont want to do it reverse back my run.sh") - confirmed
+clean revert, zero trace left (`grep LOG_FILE run.sh` empty). Step 1 (the `file=sys.stderr`
+conversions) was never applied to any file. Current state: all checker prints still go to
+plain stdout, `run.sh` is byte-identical to before this thread started.
+
+**Open for next time:** the underlying problem (checker prints drowned out) is still real and
+unaddressed - only the specific run.sh-redirect mechanism was rejected. Worth asking what
+approach *would* be acceptable before proposing another one - e.g. plain `sys.stderr` alone
+(no run.sh change at all, just visually distinguishable in a terminal that colors stderr
+differently) might already be enough without touching the Makefile/run.sh layer at all.

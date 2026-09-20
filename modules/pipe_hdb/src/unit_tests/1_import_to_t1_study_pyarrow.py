@@ -108,7 +108,7 @@ def build_csv_path(era):
 ## need to seetle to prefix with get_ and togg_ its important
 
 
-era_dfs = []
+era_dfs = {}
 for era in eras:
     contract = ERA_CONTRACTS[era]                      # {id, month_col, src_format} for this file
     csv = build_csv_path(era)
@@ -121,12 +121,13 @@ for era in eras:
     print('sample spark dataframe right after read_csv')
     df.show(3)
     df = add_monthdate(df, contract['month_col'], contract['src_format'], COMPUTED_PARTITION)
+    df = df.withColumn('era', lit(era))   # pretend factor column - known, fixed, 5-value set (ERA_CONTRACTS keys)
     n = df.count()
     if n == 0:
         print(f'[skip] {era}: 0 rows')
         continue
     print(f'[{era}] {n:,} rows')
-    era_dfs.append(df)
+    era_dfs[era] = df
 
 
 if not era_dfs:
@@ -138,8 +139,8 @@ if not era_dfs:
 ##### here we will play with io #######
 
 era_dfs
-# so claude actually is trying to write a list not a sparkdf
-era_dfs[1].show()
+# era_dfs is a dict now, keyed by era - no more list-index confusion
+era_dfs['1990_1999'].show()
 
 
 # also how can i line by line test write table to delta we think of it later
@@ -150,66 +151,55 @@ from sparkutils.functions import col, lit
 # comment out lines 155–162 (the write_tier call + stop_spark) while iterating
 STUDY = 'datalake/_study'
 shutil.rmtree(STUDY, ignore_errors=True)            # clean slate each run
-by_era = {e: df for e, df in zip(eras, era_dfs)}    # assumes none skipped (all 5 landed)
 PART   = [COMPUTED_PARTITION]                          # 'tx_monthdate'
-HROOT  = f'{STUDY}/hive/t1'
+PATH_TO_TABLE  = f'{STUDY}/hive/t1/datagov__resale_flat_prices'
 
 
-import shutil
-shutil.rmtree('datalake/_study', ignore_errors=True)
+# import shutil
+# shutil.rmtree('datalake/_study', ignore_errors=True)
 
+######################################################################
 ####### PYARROW DONE #########
+######################################################################
 import importlib, helper_pyarrow_io
 importlib.reload(helper_pyarrow_io)
 from helper_pyarrow_io import write_partition, write_partition_guarded, read, list_partitions   # re-bind — REQUIRED
 
-# partitioning = ['town', 'tx_monthdate']
-# partitioning = ['tx_monthdate']
+# partition_cols = ['town', 'tx_monthdate']
+partition_cols = ['tx_monthdate']
 
-partitioning = ['tx_monthdate', 'town']
-target = by_era['1990_1999']
-# target = by_era['1990_1999'].withColumn('extra', lit('die'))
-target = by_era['1990_1999'].drop('block')
-# target = by_era['1990_1999'].withColumn('floor_area_sqm', col('floor_area_sqm').cast('double'))
-write_partition_guarded(target.toArrow(), HROOT, partitioning, show_partitions=True)
+# partition_cols = ['tx_monthdate', 'town']
+target = era_dfs['1990_1999']
+# target = era_dfs['1990_1999'].withColumn('extra', lit('die'))
+# target = era_dfs['1990_1999'].drop('block')
+# target = era_dfs['1990_1999'].withColumn('floor_area_sqm', col('floor_area_sqm').cast('double'))
+write_partition_guarded(target.toArrow(), PATH_TO_TABLE, partition_cols, show_partitions=True)
 
+# write_partition_guarded(target.toArrow(), TIER_PATH, partition_cols, show_partitions=True)
 
-import pyarrow.dataset as ds
-ds.write_dataset(
-        data = by_era['1990_1999'].toArrow(),
-        base_dir = HROOT,
-        partitioning = partitioning,  
+# hey what does this write???
+
+# import pyarrow.dataset as ds
+# ds.write_dataset(
+#         data = era_dfs['1990_1999'].toArrow(),
+#         base_dir = TIER_PATH,
+#         partition_cols = partition_cols,  
                         
-        partitioning_flavor='hive', # the wrapper is so that i did not have to repeat these required defaults                   
-        existing_data_behavior = 'delete_matching',   # the wrapper is so that i did not have to repeat these required defaults                   
-        format = 'parquet' # the wrapper is so that i did not have to repeat these required defaults                   
-    )
+#         partition_cols_flavor='hive', # the wrapper is so that i did not have to repeat these required defaults                   
+#         existing_data_behavior = 'delete_matching',   # the wrapper is so that i did not have to repeat these required defaults                   
+#         format = 'parquet' # the wrapper is so that i did not have to repeat these required defaults                   
+#     )
 # the wrapper also curates an attached summary on every write.
 
-stage1 = spark.read.parquet(HROOT)
+stage1 = spark.read.parquet(TIER_PATH)
 
 import pyarrow.parquet as pq
 # simple file parquet DO NOT use write_dataset
-pq.write_table(by_era['1990_1999'].toArrow(), 'datalake/_study/hdb_stage.parquet')
+pq.write_table(era_dfs['1990_1999'].toArrow(), 'datalake/_study/hdb_stage.parquet')
 
 # consumer script
 stage2 = spark.read.parquet('datalake/_study/hdb_stage.parquet')
 stage2.show()
-
-############# PYICEBERG ##############
-
-
-###########
-
-tier=TIER, origin=ORIGIN, dataset=DATASET,
-==> base_dir
-
-part_cols ==> partitioning
-
-
-write_partition_guarded(by_era['1990_1999'].toArrow(), base_dir, partitioning, show_partitions=True)
-
-
 
 #################### now we must understand how write_tier cooples everything ####
 # Anyway i have write_icerberg to master next

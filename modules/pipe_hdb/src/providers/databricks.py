@@ -7,15 +7,18 @@ sys.path, and argv[0] on serverless is the full workspace script path anyway.
 """
 
 
-def add_args(parser):
+def add_provider_args(parser):
     """Supplied by the job JSON task parameters; --catalog/--schema required so a misconfigured
     job fails loudly instead of landing files somewhere unexpected."""
-    parser.add_argument('--catalog', required=True)
-    parser.add_argument('--schema',  required=True)   # UC schema that holds the landing Volume
-    parser.add_argument('--volume',  default='landing')
+    added = [
+        parser.add_argument('--catalog', required=True),
+        parser.add_argument('--schema',  required=True),   # UC schema that holds the landing Volume
+        parser.add_argument('--volume',  default='landing'),
+    ]
+    print('args_added:', [f'{a.option_strings[0]}={a.default!r}' for a in added])
 
 
-def get_spark_engine(requested):
+def provider_overwrite_spark_engine(requested):
     """Databricks provides the JVM engine; a job must never spin up a pysail server."""
     return 'java'
 
@@ -41,7 +44,7 @@ def _parse_formats(write_format):
     return formats
 
 
-def write_tier(data, *, tier, origin, dataset, write_format, part_cols,
+def dispatch_write(data, *, tier, origin, dataset, write_format, partition_keys,
                columns_contract=None, bounds=None, spark, args):
     """Union the frame(s) and write managed catalog tables, Delta and/or Iceberg.
 
@@ -54,27 +57,28 @@ def write_tier(data, *, tier, origin, dataset, write_format, part_cols,
     # a managed table is NOT a Volume path - it lands under {catalog}.{schema} as a
     # Table in UC's managed storage; read it back with spark.read.table(FQN), never by
     # path. The write mechanics (create-first / replaceWhere-overwrite / align-down)
-    # live in helper_catalog_io.
+    # live in helper_sparkcatalog_io.
 
-    `data`   : one Spark DataFrame, or a list of them (per-era, for bronze) - unioned here.
+    `data`   : one Spark DataFrame, a list of them, or a dict of them (per-era, for
+               bronze - keys are ignored, only .values() is used) - unioned here.
     `bounds` : (start_month, end_month) to overwrite an exact window (silver); None to
                derive the window from the data itself (bronze - every era is a
                contiguous month block, so the min..max span is exact).
     `columns_contract` : unused here - unionByName handles column alignment.
-    `part_cols` : list; databricks does not physically partition (managed tables get
-               Liquid Clustering). Only part_cols[-1] is used - the column the
+    `partition_keys` : list; databricks does not physically partition (managed tables get
+               Liquid Clustering). Only partition_keys[-1] is used - the column the
                replaceWhere overwrite span is built on.
     """
     from functools import reduce
     from sparkutils.functions import F
 
-    import helper_catalog_io
+    import helper_sparkcatalog_io
 
     formats = _parse_formats(write_format)
-    frames  = data if isinstance(data, list) else [data]
+    frames  = list(data.values()) if isinstance(data, dict) else data if isinstance(data, list) else [data]
     df_all  = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), frames)
 
-    period_col = part_cols[-1]      # databricks doesn't physically partition; this is
+    period_col = partition_keys[-1]      # databricks doesn't physically partition; this is
                                     # the column the replaceWhere overwrite span is built on
     data_months = sorted(str(r[0]) for r in df_all.select(period_col).distinct().collect())
     if bounds is not None:
@@ -90,10 +94,10 @@ def write_tier(data, *, tier, origin, dataset, write_format, part_cols,
 
     # NB: the first-ever write to each table defines its schema. run --eras all (or
     # import_2017_onwards, which carries every column) FIRST - older eras are a strict
-    # column subset and only ever align DOWN in helper_catalog_io.
+    # column subset and only ever align DOWN in helper_sparkcatalog_io.
     for fmt in ('delta', 'iceberg'):
         if fmt in formats:
-            helper_catalog_io.create_or_overwrite(df_all, fqn=FQN[fmt], fmt=fmt, span=span, spark=spark)
+            helper_sparkcatalog_io.create_or_overwrite(df_all, fqn=FQN[fmt], fmt=fmt, span=span, spark=spark)
 
     return n_out, data_months
 
@@ -102,6 +106,6 @@ def read_tier(spark, args, *, tier, origin, dataset, fmt='delta'):
     """Read a tier table back as a Spark DataFrame. `fmt` defaults to 'delta' (the
     canonical copy, bare name); pass fmt='iceberg' for the _iceberg twin. We still
     write BOTH formats downstream regardless of which one we read here."""
-    import helper_catalog_io
+    import helper_sparkcatalog_io
     suffix = '_iceberg' if fmt == 'iceberg' else ''
-    return helper_catalog_io.read(spark, f'{args.catalog}.{tier}.{origin}_{dataset}{suffix}')
+    return helper_sparkcatalog_io.read(spark, f'{args.catalog}.{tier}.{origin}_{dataset}{suffix}')
