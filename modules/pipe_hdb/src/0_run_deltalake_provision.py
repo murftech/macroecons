@@ -5,14 +5,11 @@ add_src_to_path('modules/pipe_hdb/src')
 
 from providers.local import add_provider_args, get_lakehouse_root_from_env, CATALOG_NAME
 
-from helper_pyiceberg_io import (
-    sh_provision_iceberg_catalog,
-    getOrCreate_catalog,
+from helper_deltalake_io import (
+    sh_provision_delta_catalog,
     createOrEvolve_table,
     custom_describe_catalog,
     double_safe_purge,
-    write_partition_guarded,
-    sail_read_iceberg,
     schema_to_code
 )
 
@@ -27,30 +24,25 @@ if IS_IPYTHON:
     # args.env = 'production'
 
 
-#### initiate catalog and namspaces #####
+#### initiate warehouse and namespaces #####
+# no catalog file for delta - the directory layout IS the catalog (see helper_deltalake_io docstring)
 
-
-ABSOLUTE_WAREHOUSE_PATH = get_lakehouse_root_from_env(args.env) / 'iceberg' / CATALOG_NAME
+ABSOLUTE_WAREHOUSE_PATH = get_lakehouse_root_from_env(args.env) / 'delta' / CATALOG_NAME
 print(f'[provision] env={args.env!r} -> {ABSOLUTE_WAREHOUSE_PATH}')
 
-sh_provision_iceberg_catalog(ABSOLUTE_WAREHOUSE_PATH, ['t1', 't2', 't3'])
+sh_provision_delta_catalog(ABSOLUTE_WAREHOUSE_PATH, ['t1', 't2', 't3'])
 
 
 #### enforcement / evolution of table schemas - restricted to THIS script.
-#    any other schema change happens inflight inside write_partition_guarded.
+#    any other schema change happens inflight inside helper_sparkdelta_io.write_partition_guarded.
 
-z_catalog = getOrCreate_catalog(ABSOLUTE_WAREHOUSE_PATH)
+import pyarrow as pa
 
 
 # #### PROVISION: t1.datagov__resale_flat_prices ####
 
-# double_safe_purge(z_catalog, 't1.datagov__resale_flat_prices')
+# double_safe_purge(ABSOLUTE_WAREHOUSE_PATH, 't1.datagov__resale_flat_prices')
 
-import pyarrow as pa
-
-# z_partition_keys = ['tx_monthdate']
-z_partition_keys= ['era', 'tx_monthdate']
-# z_tier = 't1'
 z_tier = 't1'
 z_origin = 'datagov'
 z_dataframe_name = 'resale_flat_prices'
@@ -72,30 +64,21 @@ z_schema = pa.schema([
     ])
 
 createOrEvolve_table(
-    schema_source=  z_schema, 
-    partition_keys= z_partition_keys,
-    catalog =       z_catalog, 
-    namespace =     z_tier, 
-    tbl_name =      z_tbl_name
+    schema_source=       z_schema,
+    full_warehouse_path= ABSOLUTE_WAREHOUSE_PATH,
+    namespace =          z_tier,
+    tbl_name =           z_tbl_name
     )
-
-
 
 
 # #### PROVISION: t2.datagov__resale_flat_prices ####
 
-double_safe_purge(z_catalog, 't2.datagov__resale_flat_prices')
+# double_safe_purge(ABSOLUTE_WAREHOUSE_PATH, 't2.datagov__resale_flat_prices')
 
-
-import pyarrow as pa
-
-z_partition_keys = ['tx_monthdate']
-# partition_keys= ['era', 'tx_monthdate'], 
 z_tier = 't2'
 z_origin = 'datagov'
 z_dataframe_name = 'resale_flat_prices'
 z_tbl_name = z_origin + "__" + z_dataframe_name
-
 
 # print(schema_to_code(t2.toArrow().schema))
 
@@ -113,22 +96,12 @@ z_schema = pa.schema([
     pa.field('town', pa.string(), nullable=True),
 ])
 
-
-# testers
-# schema_source=  z_schema
-# partition_keys= z_partition_keys
-# catalog =       z_catalog
-# namespace =     z_tier
-# tbl_name =      z_tbl_name
-
-
 createOrEvolve_table(
-    schema_source=  z_schema, 
-    partition_keys= z_partition_keys,
-    catalog =       z_catalog, 
-    namespace =     z_tier, 
-    tbl_name =      z_tbl_name
+    schema_source=       z_schema,
+    full_warehouse_path= ABSOLUTE_WAREHOUSE_PATH,
+    namespace =          z_tier,
+    tbl_name =           z_tbl_name
     )
 
 
-
+custom_describe_catalog(ABSOLUTE_WAREHOUSE_PATH)

@@ -1,0 +1,21 @@
+[project]
+name = 'pipe-hdb-pandas-mirror'
+version = '0.1.0'
+
+requires-python = '==3.12.*'
+
+dependencies = [
+    'requests',            # land: pipe_hdb/src/helper_datagov.py
+    'pandas==2.2.3',
+    'pyarrow==21.0.0',
+    'runtime_env',
+]
+
+[dependency-groups]
+
+dev = [
+    "ipython",
+]
+
+[tool.uv.sources]
+runtime_env = { git = "https://github.com/murftech/helper_runtime_env.git" }

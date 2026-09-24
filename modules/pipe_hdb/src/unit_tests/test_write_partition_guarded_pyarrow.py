@@ -52,6 +52,16 @@ def test_check2_partition_scheme_change_raises(tmp_path, data_narrow):
                                  on_newcols='error', on_missingcols='error')
 
 
+def test_check2_reordered_partition_keys_raise(tmp_path, data_narrow):
+    # hive key order IS the folder nesting: same keys in a different order would land in a second
+    # layout beside the first, and delete_matching would never replace the old copy -> silent duplicates
+    path = tmp_path / 't1'
+    _seed(path, data_narrow, partition_keys=['tx_monthdate', 'town'])
+    with pytest.raises(Exception, match='partition scheme change'):
+        write_partition_guarded(data_narrow, str(path), ['town', 'tx_monthdate'],
+                                 on_newcols='error', on_missingcols='error')
+
+
 # ── checks 3/4 - the (on_newcols, on_missingcols) combo matrix ────────────────
 # Source: the REPL demo's Appendix comment block, both engines used the same
 # 6 combos once the DRY pass unified vocabulary. Each entry is
@@ -126,13 +136,14 @@ def test_guard_combo(request, tmp_path, on_newcols, on_missingcols, seed_fixture
         call()
 
 
-# ── check 5 - type mismatch is 'loud' only, never blocks on its own ───────────
+# ── check 5 - parquet has no native type check, so a type change is silent there and the guard raises ──
 
-def test_check5_type_mismatch_alone_warns_but_does_not_raise(tmp_path, data_narrow, data_type_mismatch):
+def test_check5_type_mismatch_raises(tmp_path, data_narrow, data_type_mismatch):
     path = tmp_path / 't1'
     _seed(path, data_narrow)
     # same columns, same partition value, only resale_price's type differs -
     # no new/missing column, so checks 3/4 have nothing to report and only
-    # check 5 (loud) fires. Must not raise.
-    write_partition_guarded(data_type_mismatch, str(path), PARTITION_KEYS,
-                             on_newcols='error', on_missingcols='error')
+    # check 5 fires. ds.write_dataset has no type check of its own (verified), so it must raise here.
+    with pytest.raises(Exception, match='type change'):
+        write_partition_guarded(data_type_mismatch, str(path), PARTITION_KEYS,
+                                 on_newcols='error', on_missingcols='error')

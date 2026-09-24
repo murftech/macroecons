@@ -521,7 +521,7 @@ disproven by a clean, isolated test - logging the corrected finding, not the wro
 also rejects a REQUIRED-vs-optional mismatch on an otherwise-identical column (same
 `.type`, different nullability) - confirmed via a clean test (`era: required string` vs
 incoming `era: optional string`, `ValueError: Mismatch in fields`). But our own check #5
-only compares `old_schema.field(n).type != incoming.field(n).type` - it never looks at
+only compares `current_schema.field(n).type != incoming.field(n).type` - it never looks at
 `.nullable`/required-ness at all. So a same-typed, nullability-only mismatch currently
 falls into the "loud" bucket (iceberg catches it) *by accident*, not because it's one of
 the five named checks - unlike every other loud case, which we deliberately chose to make

@@ -1,51 +1,31 @@
 import pyarrow as pa
 import pyarrow.dataset as ds
+from typing import Literal
 import shared_schema_guards as guards
+
+####################################
+######## for write ##########
+####################################
 
 def write_partition(arrow_table: pa.Table, path_to_table: str, partition_keys: list, show_partitions=False):
 
-    # part_schema = pa.schema([arrow_table.schema.field(c) for c in partition_keys]) # use if ever footgun
-    # print(part_schema)
-
+    guards.summarize_partitions(arrow_table, partition_keys, 'hive', show_partitions)
 
     print(f'RUN: using pyarrow.dataset, ds.write_dataset, into path: {path_to_table}')
     ### main ###
     ds.write_dataset(
         data = arrow_table,
         base_dir = path_to_table,
-        # partitioning=ds.partitioning(part_schema, flavor='hive'), # use instead if ever footgun
         partitioning = partition_keys,                  # partitions always date or strings so this will never footgun me
         partitioning_flavor='hive',                     # REQUIRED to change default
         existing_data_behavior = 'delete_matching',     # Replace paritions REQUIRED to change default
         format = 'parquet'                                  # required to be sepcified for PA Table (can be parquet, orc, csv)
     )
-    #########
-
-    print('summaries:')
-
-    n_leaves = arrow_table.select(partition_keys).group_by(partition_keys).aggregate([]).num_rows
-    print(f"[hive] replacing {n_leaves} leaf partitions on {'/'.join(partition_keys)}:")
-    for c in partition_keys:
-        vals = sorted(set(arrow_table.column(c).to_pylist()))
-        print(f"    {c:<14} {len(vals):>4} values   {vals[0]} … {vals[-1]}")
-
-    if show_partitions == True:
-        print('show partitions')
-        _arrow_listvalues(arrow_table, partition_keys, 1000)
+    ### main ###
 
 
 
-
-from typing import Literal
-
-def write_partition_full_refresh(
-    arrow_table: pa.Table, path_to_table: str, partition_keys: list, show_partitions=False):
-    """No filter, no delete_matching - wipes EVERY existing partition, not just the
-    ones present in arrow_table, and replaces the whole directory with only what's
-    given. Mirrors helper_pyiceberg_io.write_partition_full_refresh's tbl.overwrite()
-    (no filter) - parquet has no table-level overwrite call to mirror it with, so the
-    equivalent is removing the directory outright before writing fresh.
-    """
+def write_partition_full_refresh(arrow_table: pa.Table, path_to_table: str, partition_keys: list, show_partitions=False):
     import os, shutil
     print(f'[hive] full refresh on {path_to_table} - dropping ALL existing partitions, replacing with {arrow_table.num_rows} incoming rows')
     if os.path.isdir(path_to_table):
@@ -53,294 +33,207 @@ def write_partition_full_refresh(
     write_partition(arrow_table, path_to_table, partition_keys, show_partitions)
 
 
-def write_partition_guarded(arrow_table: pa.Table, path_to_table: str, partition_keys: list,
-                            show_partitions=False, *,
-                            on_newcols: Literal['evolve', 'drop', 'error'] = 'error',
-                            on_missingcols: Literal['pad_null', 'error'] = 'error',
-                            full_refresh=False):
+def write_partition_guarded(
+    arrow_table: pa.Table,
+    path_to_table: str,
+    partition_keys: list,
+    show_partitions=False,
+    *,
+    on_newcols: Literal['evolve', 'drop', 'error'] = 'error',
+    on_missingcols: Literal['pad_null', 'error'] = 'error',
+    full_refresh=False):
     """write_partition + a schema guard against the dataset already at path_to_table.
-
-    Rejects (Exception) BEFORE writing if, versus what's on disk:
-      0. partition key columns must exist in the incoming data at all - ALWAYS on, no
-         toggle, immediate raise (gated entry point - nothing else can be meaningfully
-         checked if a partition key column isn't even present)
-      1. any partition key column contains a null value - ALWAYS on, no toggle, but
-         collected into problems_silent like 2/3/4, not an immediate raise
-      2. the partition key list changed
-      3. the incoming batch is MISSING a column the table has  (on_missingcols=)
-      4. the incoming batch has a NEW column   (on_newcols=)
-      5. a shared column changed type
-
-    Check 0 is the one exception that stays an immediate, gated raise - it HAS to run
-    first and HAS to be immediate: it used to live later, gated behind `old_keys is not
-    None`, but that meant check 1's own `arrow_table.column(col)` call raised pyarrow's
-    own less-clear native error first whenever a partition key column was entirely
-    absent - check 0's own (more informative) exception never got a chance to fire.
-    Moving it first fixes that; keeping it an immediate raise (not appended to
-    problems_silent) is also required, not just simpler - problems_silent doesn't exist
-    yet this early, AND nothing downstream (including check 1's own null-count lookup)
-    can run meaningfully without the column existing in the first place.
-
-    Check 1 (once check 0 has confirmed the columns exist) has no opt-out either, same
-    reasoning as before: `delete_matching` treats null as just another partition value
-    to match-and-replace, so two unrelated batches that both happen to have a null
-    partition key don't just become unqueryable - each one silently DESTROYS the
-    previous one's null-partitioned rows on write. Unlike a missing/new data column,
-    there's no legitimate case for a null partition key - but unlike check 0, nothing
-    downstream depends on check 1 having already run, so it can safely join the
-    accumulate-then-raise-once group instead of needing its own immediate raise.
-
-    Checks 1/2/3/4 collect into `problems_silent` (always block the push, all reported
-    together in one exception) and 5 into `problems_loud` (printed as a warning and
-    the push proceeds anyway UNLESS something else is also silent) - same accumulate-
-    then-raise-once shape as helper_pyiceberg_io.write_partition_guarded, so a batch
-    with two separate problems reports both in one exception instead of only the first
-    one hit. Worth knowing this genuinely means something different here than it does
-    for iceberg, though: iceberg's underlying tbl.overwrite() has some native schema
-    validation of its own to fall back on for a "loud" problem left unresolved -
-    ds.write_dataset() has NONE (verified empirically earlier - it will silently write
-    a narrower/wider file with zero complaint), so a "loud" problem here that isn't
-    also paired with a silent one will actually reach disk, not just risk a murkier
-    underlying error the way it does for iceberg.
-
-    First write to a fresh dir: nothing on disk, nothing to check - writes straight through.
-    Any path that doesn't raise prints what it did - only 'error' is silent-by-default (the
-    exception message IS the log).
-
-    `on_missingcols` : 'error' (default) or 'pad_null'. A column missing from this batch
-        but present on disk could be legitimate (this era predates it) or a bug upstream -
-        the guard can't tell those apart, so it defaults to raising. 'pad_null' null-pads
-        the missing column(s), typed from the on-disk schema, and pushes anyway - this is
-        the only sane way to "allow" a missing column for parquet (no format-level schema
-        evolution to fall back on): pushing WITHOUT padding would write a file physically
-        lacking the column, recreating the exact cross-file mismatch this guard exists to
-        prevent.
-
-    `on_newcols` : 'error' (default), 'evolve', or 'drop'. 'evolve' writes the new
-        column(s) through as-is - parquet has no real schema evolution mechanism, so
-        this is really "push and hope the rest of the dataset catches up" rather than a
-        genuine catalog-level evolution the way iceberg's 'evolve' is, but it's named
-        the same on purpose: same conceptual action, different engine underneath.
-        Files already on disk will NOT have it until backfilled. 'drop' discards the
-        new column(s) before writing, keeping this directory's schema exactly as it
-        already is - useful for a fixed-contract destination (e.g. a t2-style stage)
-        where an unexpected extra column is more likely a bug than an intentional
-        addition.
-
-    Use this for the pipeline tier writes. Plain write_partition stays for ad-hoc /
     """
-    guards.validate_guard_args(on_newcols, on_missingcols)
 
-    print('schema sync enforce 0: partition key columns must exist in the incoming data')
-    guards.assert_partition_keys_exist(arrow_table, partition_keys, path_to_table)
+    guards.literal_is_valid(on_newcols, on_missingcols)
 
-    print('schema sync enforce 1: no partition key column may contain a null value')
-    # ds.write_dataset fails silently (delete_matching would overwrite the wrong
-    # bucket) - see the long explanation kept on this in the docstring.
-    arrow_table, problems_silent = guards.check_and_cast_partition_keys_not_null(arrow_table, partition_keys)
-    problems_loud = []
+    ### load the filepath and label the schema for diffs ###
+    print(f"[guard] running schema guards for {path_to_table}")
 
-    old_schema, old_keys = _existing_dataset_schema(path_to_table, partition_keys)
+    # digest
+    current_partition_cols, current_schema = _existing_dataset_schema(path_to_table)   # (None, None) when nothing on disk yet
 
-    if old_keys is None:
+    ##########
+
+    problems_silent = []   # ds.write_dataset would NOT complain - we raise
+
+    ###################################
+    ### schema sync enforce 0: partition key columns must exist in the first place ###
+    ###################################
+    guards.assert_partition_keys_exist(arrow_table, partition_keys)
+
+    ###################################
+    ### schema sync enforce 1: no partition key must not contain null ###
+    ###################################
+    # ds.write_dataset fails silently (delete_matching would overwrite the wrong bucket)
+    arrow_table, problem_collect = guards.check_partition_keys_nullable_false(arrow_table, partition_keys)
+    problems_silent += problem_collect
+
+    if current_schema is None:
         print('nothing on disk, nothing to check - write straight through.')
 
-    if old_keys is not None:
-        print("schema sync enforce 2: partition keys requested mismatch destination's keys")
+    else:
+        current_names = set(current_schema.names)
+
+        # partition columns live in the folder names, not inside the parquet files - so they are left out of the diff.
+        new_schema = arrow_table.drop_columns(partition_keys).schema
+        new_names = set(new_schema.names)
+
+        ###################################
+        ### schema sync enforce 2: partition keys must match destination ###
+        ###################################
         # ds.write_dataset fails silently (writes under the wrong partitioning, no error)
-        problems_silent += guards.check_partition_keys_match(partition_keys, old_keys)
+        problems_silent += guards.check_partition_keys_match_current(current_partition_cols, partition_keys, ordered=True)
 
-        incoming_schema = pa.schema([f for f in arrow_table.schema if f.name not in partition_keys])
-        old_names, new_names = set(old_schema.names), set(incoming_schema.names)
-
-        print('schema sync enforce 3: push data must have ALL columns of destination schema')
+        ###################################
+        ### schema sync enforce 3: Behaviour: on_missingcols (error or pad_null) ###
+        ###################################
         # ds.write_dataset fails silently (writes a file physically lacking the column)
-        arrow_table, new_names, problems = guards.reconcile_missing_columns(
-            arrow_table, old_schema, new_names, on_missingcols, path_to_table)
-        problems_silent += problems
+        arrow_table, new_names, problem_collect = (
+            guards.reconcile_missing_columns(
+            arrow_table, current_schema, new_names,
+            on_missingcols)
+        )
+        new_schema = arrow_table.drop_columns(partition_keys).schema
+        problems_silent += problem_collect
 
-        print('schema sync enforce 4: push data must not have new columns unless told to')
-        # ds.write_dataset fails silently (writes the extra column - files already on disk
-        # just won't have it, no error either way)
-        arrow_table, new_names, extra_cols, problems, handled = guards.reconcile_new_columns_drop_or_error(
-            arrow_table, old_names, new_names, on_newcols, path_to_table)
-        problems_silent += problems
-        if extra_cols and not handled:  # 'evolve' - parquet-specific, no shared mechanism
+        ###################################
+        ### schema sync enforce 4: Behaviour: on_newcols (error, drop, or evolve additive ###
+        ###################################
+        # ds.write_dataset fails silently (writes the extra column - files already on disk just won't have it)
+        newcols_results = guards.reconcile_new_columns(arrow_table, current_names, new_names, on_newcols)
+
+        arrow_table = newcols_results.arrow_table
+        new_names = newcols_results.new_names
+        extra_cols = newcols_results.extra_cols
+        problems_silent += newcols_results.problem_collect
+        new_schema = arrow_table.drop_columns(partition_keys).schema
+
+        # parquet specific
+        if extra_cols and newcols_results.needs_evolve:
             print(
                 f"[guard] {path_to_table}: incoming batch has NEW columns {sorted(extra_cols)} "
                 f"- on_newcols='evolve', writing them through anyway. parquet dir has no schema "
                 f"evolution: files already on disk will NOT have {sorted(extra_cols)} until backfilled."
             )
 
-        incoming_schema = pa.schema([f for f in arrow_table.schema if f.name not in partition_keys])
+        ##### updated all schemas ####
+        finalized_schema = current_schema       # nothing to evolve on disk: the files keep the schema they were written with
 
-        print('schema sync enforce 5: persist the exact type case of each column.')
-        # ds.write_dataset fails silently (no native type check at all - verified empirically)
-        problems_loud += guards.check_types_match(old_schema, incoming_schema, old_names & new_names)
+        ###################################
+        ### schema sync enforce 5: persist the exact type case of each column. ###
+        ###################################
+        # ds.write_dataset fails silently (no native type check at all - verified empirically), so this raises too
+        problems_silent += guards.check_types_match(finalized_schema, new_schema)
 
-    # OUTSIDE the old_keys branch on purpose - check 1 (above) can add to
-    # problems_silent even on a first-ever write, with nothing on disk yet, so this
-    # has to fire regardless of whether checks 2-5 ran at all.
-    guards.raise_or_warn(
-        problems_silent, problems_loud, path_to_table,
-        engine_note=" (parquet has no native check to fall back on for these - "
-                    "proceeding writes them for real, unlike iceberg)")
+    ##### updated all tables ####
+    finalized_arrow_table = arrow_table
+
+    ##### collect all problems ####
+    guards.raise_or_warn(problems_silent, [])
 
     print('RUN')
+
     if full_refresh:
-        write_partition_full_refresh(arrow_table, path_to_table, partition_keys, show_partitions)
+        write_partition_full_refresh(finalized_arrow_table, path_to_table, partition_keys, show_partitions)
     else:
-        write_partition(arrow_table, path_to_table, partition_keys, show_partitions)
+        write_partition(finalized_arrow_table, path_to_table, partition_keys, show_partitions)
 
 
+####################################
+######## for read ##########
+####################################
 
 
-def write_partition_guarded_old(arrow_table: pa.Table, path_to_table: str, partition_keys: list,
-                            show_partitions=False, *, on_newcols=['push', 'drop', 'error'],
-                            on_missingcols=['pad_null', 'error']):
-    """write_partition + a schema guard against the dataset already at path_to_table.
-
-    Rejects (Exception) BEFORE writing if, versus what's on disk:
-      1. the partition key list changed
-      2. the incoming batch is MISSING a column the table has  (unless pad_missing_columns=True)
-      3. the incoming batch has a NEW column   (unless allow_new_columns=True)
-      4. a shared column changed type
-    First write to a fresh dir: nothing on disk, nothing to check - writes straight through.
-
-    `pad_missing_columns` : toggle for check 2. False (default) = raise, no push - forces
-        you to notice and decide. True = null-pad the missing column(s) (typed from the
-        on-disk schema, i.e. what's already there) and push anyway - this is the only
-        sane way to "allow" a missing column for parquet, since unlike iceberg there's no
-        format-level schema evolution: pushing WITHOUT padding would write a file physically
-        lacking the column, recreating the exact cross-file mismatch this guard exists to
-        prevent. There is no "skip the check, push as-is" option here on purpose.
-
-    Use this for the pipeline tier writes. Plain write_partition stays for ad-hoc /
-    """
-
-    old_schema, old_keys = _existing_dataset_schema(path_to_table, partition_keys)
-
-    if old_keys is None:
-        print('nothing on disk, nothing to check - write straight through.')
-
-    if old_keys is not None:
-        print("schema sync enforce 1: partition keys requested mismatch destination's keys")
-        if old_keys != list(partition_keys):
-            raise Exception(
-                f"[guard] partition scheme change in {path_to_table}: on disk {old_keys}, "
-                f"writing {list(partition_keys)}. wipe the dir to re-partition.\n"
-                "no push"
-            )
-
-        incoming = pa.schema([f for f in arrow_table.schema if f.name not in partition_keys])
-        old_n, new_n = set(old_schema.names), set(incoming.names)
-
-        print('schema sync enforce 2: push data must have ALL columns of destination schema')
-
-        missing_cols = old_n - new_n
-        if missing_cols:
-            if not pad_missing_columns:
-                raise Exception(
-                    f"[guard] {path_to_table}: incoming batch is MISSING columns {sorted(missing_cols)} "
-                    f"(pass pad_missing_columns=True to null-pad and push instead) \n"
-                    "no push"
-                    )
-            print(f"[guard] {path_to_table}: auto-padding {sorted(missing_cols)} as null "
-                  f"(present on disk, absent from this batch)")
-            for col in missing_cols:
-                arrow_table = arrow_table.append_column(
-                    col, pa.nulls(arrow_table.num_rows, old_schema.field(col).type)
-                )
-            incoming = pa.schema([f for f in arrow_table.schema if f.name not in partition_keys])
-            old_n, new_n = set(old_schema.names), set(incoming.names)
-
-        print('schema sync enforce 3: Push data is advisable not to have extra columns')
-        if new_n - old_n:
-            if not allow_new_columns:
-                raise Exception(
-                    f"[guard] {path_to_table}: incoming batch has NEW columns {sorted(new_n - old_n)} "
-                    f"(parquet dir has no schema evolution; wipe + rebuild, or pass allow_new_columns=True) \n"
-                    "no push"
-                )
-            print(
-                f"[guard] {path_to_table}: incoming batch has NEW columns {sorted(new_n - old_n)} "
-                f"- allow_new_columns=True, proceeding anyway. parquet dir has no schema evolution: "
-                f"files already on disk will NOT have {sorted(new_n - old_n)} until backfilled."
-            )
-        
-        print('schema sync enforce 4: persist the exact type case of each column.')
-        for n in old_n & new_n:
-            if old_schema.field(n).type != incoming.field(n).type:
-                raise Exception(
-                    f"[guard] {path_to_table}: type change on '{n}': "
-                    f"{old_schema.field(n).type} -> {incoming.field(n).type} \n"
-                    "no push"
-                )
-
-    print('RUN')
-    write_partition(arrow_table, path_to_table, partition_keys, show_partitions)
-
-
-
-def _existing_dataset_schema(path_to_table: str, partition_keys: list):
-    """(data_schema, partition_keys) of the parquet dataset already at path_to_table, or
-    (None, None) if the dir is absent / empty. Reads footers only, via pyarrow.
-    Raises if the dir won't open as one dataset (e.g. a mixed partition layout).
-
-    # ---- SPECIAL NEW ADDITION (2026-09-14) ----
-    # data_schema is the UNION of every physical file's own schema, not
-    # ds.dataset()'s auto-discovered one. Without an explicit schema=,
-    # ds.dataset() silently INTERSECTS columns across mismatched files -
-    # a column only some files have just vanishes from the discovered schema,
-    # with no error. That made this "random": which columns "exist" depended
-    # on whatever mix of files happened to be on disk at call time, which
-    # changes as allow_new_columns=True writes accumulate over separate runs.
-    # Unioning each fragment's physical_schema directly is deterministic: the
-    # destination's schema is always the true union of every column ever
-    # written here, independent of file-listing order or current file mix.
-    # ---- END SPECIAL NEW ADDITION ----
-    """
-    import os
-    if not os.path.isdir(path_to_table) or not os.listdir(path_to_table):
-        return None, None
-    d = ds.dataset(path_to_table, format='parquet', partitioning='hive')
-    keys = list(d.partitioning.schema.names) if d.partitioning is not None else []
-    file_schemas = [f.physical_schema for f in d.get_fragments()]
-    data = pa.unify_schemas(file_schemas)
-    return data, keys
-
-
-
-def _arrow_listvalues(arrow_table, columns, CAP = 30):
-
-    distinct = (
-        arrow_table
-        .select(columns)
-        .group_by(columns)
-        .aggregate([])
-        .sort_by([(c, "ascending") for c in columns])
-        )
-
-    rows = distinct.to_pylist()
-    print(f"[hive] replacing {len(rows)} partitions on {'/'.join(columns)}:")
-    for r in rows[:CAP]:
-        print("  " + " / ".join(str(r[c]) for c in columns))
-    if len(rows) > CAP:
-        print(f"  … and {len(rows) - CAP} more")
-
-
-
-
-
-
-# currently useless i should always use the native function if by itself.
+# sub: currently useless i should always use the native function if by itself.
 def read(spark, root: str):
     spark_dataframe = spark.read.parquet(root)
     return spark_dataframe
 
+# why not this name. but reading in pyaroows cannot be symmetrical to reading iceberg i think. check that both read are ddifferent.abs
+
+def sail_read_pyarrow(spark, root: str):
+    spark_dataframe = spark.read.parquet(root)
+    return spark_dataframe
+
+
+def pandas_read_pyarrow(root: str):
+    # pandas twin of sail_read_pyarrow: hive dirs -> arrow table -> pandas. partition columns come back from the folder names.
+    pandas_dataframe = ds.dataset(root, format='parquet', partitioning='hive').to_table().to_pandas()
+    return pandas_dataframe
+
+
+####################################
+#### appendix ####
+####################################
+
+
+####
+# testers
+# path_to_table = '/Users/murftech/Root/MasterETL/dev/lakehouse/hive/macroecons/t1/datagov__resale_flat_prices/'
+# partition_keys = ['tx_monthdate']
+
+def _existing_dataset_schema(path_to_table: str):
+    """
+    Union of all the schemas of ALL .parquet in dataset folder
+    """
+
+    import os
+    if not os.path.isdir(path_to_table) or not os.listdir(path_to_table):
+        # EXPLAIN: # if folder does not exist, or folder is empty
+        print('dataset not yet exists, return None, not Error')
+        return None, None
+
+    ### main ###
+    d = ds.dataset(path_to_table, format='parquet', partitioning='hive')
+
+    if d.partitioning is not None:
+        partition_keys = list(d.partitioning.schema.names)
+    else: 
+        partition_keys =[]
+
+    list_schemas = [parquet.physical_schema for parquet in d.get_fragments()]
+    schema_superset = pa.unify_schemas(list_schemas)
+    ### main ###
+
+    # list_schemas = []
+    ## for use inline understanding
+    # # testers
+    # for fragment in d.get_fragments():
+    #     # print(f'reading: {fragment.path}')  
+    #     pa_schema = fragment.physical_schema
+    #     # print(f'schema is: {pa_schema}')
+    #     list_schemas.append(pa_schema)
+
+    return partition_keys, schema_superset
+
+
+def _write_partition_footgun(arrow_table: pa.Table, path_to_table: str, partition_keys: list, show_partitions=False):
+
+     # use this version instead instead if ever footgun for forgotten reason, but
+
+    part_schema = pa.schema([arrow_table.schema.field(c) for c in partition_keys]) # use if ever footgun
+    print(part_schema)
+
+    print(f'RUN: using pyarrow.dataset, ds.write_dataset, into path: {path_to_table}')
+
+
+    ### main ###
+    ds.write_dataset(
+        data = arrow_table,
+        base_dir = path_to_table,
+        partitioning=ds.partitioning(part_schema, flavor='hive'),
+        existing_data_behavior = 'delete_matching',     # Replace paritions REQUIRED to change default
+        format = 'parquet'                                  # required to be sepcified for PA Table (can be parquet, orc, csv)
+    )
+    #########
+
+    guards.summarize_partitions(arrow_table, partition_keys, 'hive', show_partitions)
+
+
 
 # sub
-# what is the bottom really for? 
+# any use for this?
 
 # def list_partitions(root: str, partition_col: str):
 #     """The `partition_col=` directory names currently on disk - for eyeballing
@@ -388,3 +281,5 @@ def list_partitions(path_to_table: str, partition_keys: list):
         ):
             found.append(rel)
     return sorted(found)
+
+

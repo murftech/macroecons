@@ -43,16 +43,14 @@ Usage:
   ./databricks_deploy.sh <action>                 (job-agnostic)
       login    - ensure authenticated to ${DATABRICKS_PROFILE}
       export   - uv export the databricks dep group -> src/requirements-databricks.txt
-      sync     - push src/ to the databricks workspace (uploads only - never deletes)
-      prune    - PREVIEW workspace files/dirs under src/ that no longer exist locally
-      prune apply - delete them (the mirror half sync doesn't do)
+      sync     - push src/ to the databricks workspace
       unsync   - delete src/ from the workspace
 
   ./databricks_deploy.sh <job> <action>           <job> = backfill | update
       show     - render + jq-validate that job's JSON (no API call)
       create   - create the job (blocks if the name already exists)
       reset    - update the existing job to the current JSON
-      deploy   - export + sync + prune apply + create-or-reset + run   (the one-shot)
+      deploy   - export + sync + create-or-reset + run   (the one-shot)
       run      - run-now
       delete   - delete the job
 
@@ -67,7 +65,6 @@ main() {
     login)  login "${@:2}"; return ;;
     export) uv_export;       return ;;
     sync)   sync;            return ;;
-    prune)  prune "${@:2}";  return ;;
     unsync) unsync;          return ;;
   esac
 
@@ -84,7 +81,7 @@ main() {
     reset)  reset ;;
     run)    run ;;
     delete) delete ;;
-    deploy) uv_export; sync; prune apply; create_or_reset; run ;;
+    deploy) uv_export; sync; create_or_reset; run ;;
     *)      usage ;;
   esac
 }
@@ -113,49 +110,6 @@ sync() {
     echo "RUN: databricks sync"
     databricks sync --full "${SRC_DEV}" "${SRC_DESTINATION}"
     echo "Here: https://dbc-b01338b1-a584.cloud.databricks.com/browse/folders/4314226011913546?o=7474643839559941"
-}
-
-# WHY prune, not unsync + sync: unsync empties the workspace first, so a scheduled run
-# starting in that gap finds no scripts and fails. prune only ever deletes what is
-# remote-ONLY - anything that still exists locally (tracked or not) is never touched.
-# `databricks sync` alone never removes a file deleted/renamed locally, which is how
-# helper_catalog_io.py, helper_databricks_iceberg_io.py and old .bak files piled up.
-prune() {
-    local mode="${1:-preview}"
-    echo "Compare DESTINATION vs DEV:  ${SRC_DESTINATION}  vs  ${SRC_DEV}"
-    SRC_DEV="${SRC_DEV}" SRC_DESTINATION="${SRC_DESTINATION}" PRUNE_MODE="${mode}" python3 - <<'PY'
-import json, os, subprocess
-from pathlib import Path
-
-dev, dest, mode = Path(os.environ['SRC_DEV']), os.environ['SRC_DESTINATION'], os.environ['PRUNE_MODE']
-
-def ls(path):
-    out = subprocess.run(['databricks', 'workspace', 'list', path, '-o', 'json'],
-                         capture_output=True, text=True, check=True).stdout
-    return json.loads(out or '[]')
-
-extras = []                                   # (path, is_dir) remote-only, top-most only
-def walk(remote):
-    for obj in ls(remote):
-        rel = obj['path'][len(dest):].lstrip('/')
-        local = dev / rel
-        if obj['object_type'] == 'DIRECTORY':
-            if local.is_dir(): walk(obj['path'])      # dir still exists locally: look inside
-            else: extras.append((obj['path'], True))  # whole dir gone locally: remove it whole
-        elif not local.exists():
-            extras.append((obj['path'], False))
-walk(dest)
-
-if not extras:
-    print('nothing to prune - workspace src/ has no remote-only files'); raise SystemExit
-print(f'{len(extras)} remote-only item(s):')
-for p, is_dir in extras: print(f"  {'DIR ' if is_dir else 'FILE'}  {p[len(dest):].lstrip('/')}")
-if mode != 'apply':
-    print('PREVIEW only - run `databricks_deploy.sh prune apply` to delete them'); raise SystemExit
-for p, is_dir in extras:
-    subprocess.run(['databricks', 'workspace', 'delete', p] + (['--recursive'] if is_dir else []), check=True)
-print(f'pruned {len(extras)} item(s)')
-PY
 }
 
 unsync() {
@@ -210,7 +164,7 @@ import_task() {
       "spark_python_task": {
         "python_file": "${SRC_DESTINATION}/1_import_to_t1.py",
         "parameters": ["--eras", "$2",
-                       "--write_format", "delta",
+                       "--write_format", "iceberg",
                        "--catalog", "${CATALOG_NAME}",
                        "--schema", "{{job.parameters.landing_schema}}",
                        "--volume", "${LANDING_VOLUME}"]
@@ -230,7 +184,7 @@ stage_task() {
       "min_retry_interval_millis": 60000,
       "spark_python_task": {
         "python_file": "${SRC_DESTINATION}/2_stage_to_t2.py",
-        "parameters": [$3"--write_format", "delta",
+        "parameters": [$3"--write_format", "iceberg",
                        "--catalog", "${CATALOG_NAME}",
                        "--schema", "{{job.parameters.landing_schema}}",
                        "--volume", "${LANDING_VOLUME}"]
@@ -275,10 +229,9 @@ EOF
 # ── BACKFILL: land x2 (parallel) -> 5 imports (serial) -> stage_all ──────────
 #   serial imports: concurrent .overwrite() on one Delta table throws
 #   DELTA_CONCURRENT_APPEND even for disjoint months; the 5 eras are tiny, so a
-#   chain costs ~nothing. The t1/t2 tables must already exist (databricks_provision.sh
-#   tables) - nothing creates them in a write. import_2017_onwards runs first and
-#   evolves t1 with remaining_lease (on_newcols='evolve'); older eras null-pad it
-#   (on_missingcols='pad_null') and .overwrite() only their own month window.
+#   chain costs ~nothing. import_2017_onwards runs first and .create()s both t1
+#   tables with the full column set; older eras align DOWN (1990-2014 lack
+#   remaining_lease) and .overwrite() their own months.
 #
 #     land_backfill ┐
 #     land_update  ─┴─> import_2017_onwards -> import_1990_1999 -> import_2000_2012Feb

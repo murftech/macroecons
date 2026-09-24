@@ -12,7 +12,7 @@ add_src_to_path('modules/pipe_hdb/src')
 if IS_DATABRICKS:
     from providers.databricks import add_provider_args, provider_overwrite_spark_engine, read_tier, dispatch_write
 elif IS_LOCAL:
-    from providers.local import add_provider_args, provider_overwrite_spark_engine, read_tier, dispatch_write
+    from providers.local import add_provider_args, provider_overwrite_spark_engine, read_tier, dispatch_write, preprovision_local_jvm_spark
 
 from helper_transit import sortcount
 
@@ -28,9 +28,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--startMonth', default=thisMonth)
 parser.add_argument('--endMonth',   default=thisMonth)
 parser.add_argument('--spark_engine', choices=['sail', 'java'], default='sail')
-parser.add_argument('--write_format', default='parquet,iceberg',
-                    help="comma-separated: parquet,delta,iceberg. local writes parquet+iceberg; "
-                         "databricks writes delta+iceberg (deploy passes --write_format delta,iceberg)")
+parser.add_argument('--write_format', choices=['parquet', 'iceberg', 'delta'], default='parquet',
+                    help="ONE table format per run - read AND written in it. local: parquet (default, "
+                         "any engine), iceberg (any engine), delta (java only). databricks: iceberg "
+                         "(delta not wired there yet; parquet is local-only).")
 add_provider_args(parser)                # databricks: --catalog/--schema/--volume ; local: --env
 args = parser.parse_args()
 
@@ -38,10 +39,11 @@ args = parser.parse_args()
 if IS_IPYTHON:
     args.startMonth = '2022-09'
     args.endMonth = '2022-10'
-    args.spark_engine = 'sail'
-    args.write_format = 'parquet'
+    # args.spark_engine = 'sail'
+    args.spark_engine = 'java'
+    # args.write_format = 'parquet'
     # args.write_format = 'iceberg'
-    # args.write_format = 'parquet,iceberg'
+    args.write_format = 'delta'
     # print(args)
 
 # resolve the engine ONCE, here: provider_overwrite_spark_engine() returns 'java' on databricks, passes
@@ -59,6 +61,13 @@ SOURCE_TIER, TIER = 't1', 't2'
 
 
 # ── START SPARK ───────────────────────────────────────────────────────────────
+# preprovision_local_jvm_spark MUST run before get_spark(): jars/catalogs only load at
+# JVM boot time, never at session-adopt time - see providers.local's own docstring for why.
+# covers the READ too: t1 is read in the same --write_format this run writes t2 in.
+if IS_LOCAL:
+    if args.write_format in ('iceberg', 'delta') and args.spark_engine == 'java':
+        preprovision_local_jvm_spark(args.env, {args.write_format})
+
 from sparkutils.getspark import get_spark, stop_spark
 spark = get_spark('hdb_stage', args.spark_engine)
 from sparkutils.functions import col, lit, when, to_date, year
@@ -73,7 +82,8 @@ from sparkutils.functions import col, lit, when, to_date, year
 lo = to_date(lit(f'{args.startMonth}-01'))
 hi = to_date(lit(f'{args.endMonth}-01'))
 
-t1_src = read_tier(spark, args, tier=SOURCE_TIER, origin=ORIGIN, dataset=DATASET)
+# ONE format per run: t1 is read in the same format t2 is written in (script 1 wrote t1 in it too)
+t1_src = read_tier(spark, args, tier=SOURCE_TIER, origin=ORIGIN, dataset=DATASET, fmt=args.write_format)
 
 t1 = (
     t1_src
@@ -114,7 +124,6 @@ derived.printSchema()
 # sortcount(derived, 'tx_year')
 # sortcount(derived, ['town', 'street_name'], 100)
 
-
 ############### SELECT ###############
 t2 = (
     derived
@@ -131,11 +140,11 @@ t2.printSchema()
 ############### WRITE ###############
 # provider owns the fork: files under datalake/ locally, managed catalog tables on
 # databricks. bounds = the exact month window to overwrite (this run's t2 slice).
-n_out, months_in = dispatch_write(
+dispatch_write(
     t2, tier=TIER, origin=ORIGIN, dataset=DATASET,
-    write_format=args.write_format, partition_keys=['tx_monthdate'],
+    write_format=args.write_format, partition_keys=['tx_monthdate'], span_col='tx_monthdate',
     bounds=(args.startMonth, args.endMonth),
-    spark=spark, args=args)
+    spark=spark, args=args, show_partitions=True)
 
 
 stop_spark(spark)
@@ -144,7 +153,6 @@ stop_spark(spark)
 print('=' * 60)
 print(f'  ran: startMonth={args.startMonth}  endMonth={args.endMonth}  '
       f'engine={args.spark_engine}  format={args.write_format}  databricks={IS_DATABRICKS}')
-print(f'  out: {n_out:,} rows | partitions {months_in}')
 print('=' * 60)
 
 print('RUNTIME SUMMARY: runned with settings [sys.argv]:')

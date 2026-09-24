@@ -10,7 +10,7 @@ SRC_DIR=modules/pipe_hdb/src
 if [ -n "${RUNNING_IN_CONTAINER:-}" ]; then
   RUN="python"
 else
-  RUN="uv run --project modules/pipe_hdb --group iceberg python"
+  RUN="uv run --project modules/pipe_hdb --group iceberg --group delta python"
 fi
 # echo $RUN
 

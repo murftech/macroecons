@@ -1,6 +1,19 @@
-"""Databricks provider - managed Unity Catalog tables (Delta + Iceberg) for the tiers,
-a UC Volume path for the landing zone. Env args (--catalog/--schema/--volume) come
-from the job JSON task parameters.
+"""Databricks provider - managed Unity Catalog DELTA tables for the tiers, a UC Volume
+path for the landing zone. Env args (--catalog/--schema/--volume) come from the job
+JSON task parameters.
+
+DELTA ONLY (decided 2026-09-24). On this workspace a `USING iceberg` managed table turned
+out to be a Delta table + UniForm underneath (verified via table properties:
+delta.enablemanagedicebergtable / universalFormat.enabledFormats=iceberg, format=DELTA),
+so "iceberg on databricks" only adds an Iceberg face for OUTSIDE engines - nothing
+outside Databricks reads these tables, so plain Delta. If an external Iceberg reader
+ever appears, switch UniForm on for that one table (ALTER TABLE ... SET TBLPROPERTIES) -
+no rewrite, no code change here.
+
+Tables (medallion = schema-per-layer; origin folded into the name):
+    {catalog}.{tier}.{origin}_{dataset}     e.g. macroecons.t1.datagov_resale_flat_prices
+Provisioned explicitly by deploy_databricks/databricks_provision.sh `tables` - never
+implicitly by a write (same contract as local's 0_run_deltalake_provision.py).
 
 No import shim needed here: the script's add_src_to_path() has already put src/ on
 sys.path, and argv[0] on serverless is the full workspace script path anyway.
@@ -30,82 +43,67 @@ def get_landing_dir(args, origin, dataset):
     return f'/Volumes/{args.catalog}/{args.schema}/{args.volume}/{origin}/{dataset}'
 
 
-_KNOWN_FORMATS   = {'parquet', 'delta', 'iceberg'}
-_DBX_SUPPORTED   = {'delta', 'iceberg'}    # parquet is a path format (local-only); UC managed tables are delta/iceberg
+def _require_delta(write_format):
+    """argparse already restricts --write_format to ONE of parquet/iceberg/delta; this adds
+    what databricks accepts: delta only. parquet is the scripts' DEFAULT, so a job that
+    forgets --write_format lands here and is refused loudly rather than half-running."""
+    if write_format != 'delta':
+        raise SystemExit(f"databricks writes managed DELTA tables only - got --write_format {write_format!r} "
+                         f"(parquet is local-only; iceberg is not used on databricks, see module docstring)")
 
 
-def _parse_formats(write_format):
-    formats = {f.strip() for f in write_format.split(',')}
-    if formats - _KNOWN_FORMATS:
-        raise SystemExit(f"unknown --write_format {sorted(formats - _KNOWN_FORMATS)}; known: parquet, delta, iceberg")
-    if formats - _DBX_SUPPORTED:
-        raise SystemExit(f"databricks writes delta + iceberg managed tables only; {sorted(formats - _DBX_SUPPORTED)} "
-                         f"is local-only (parquet = a Hive-partitioned dir, not a catalog table)")
-    return formats
+def _fqn(args, tier, origin, dataset):
+    return f'{args.catalog}.{tier}.{origin}_{dataset}'
 
 
-def dispatch_write(data, *, tier, origin, dataset, write_format, partition_keys,
-               columns_contract=None, bounds=None, spark, args):
-    """Union the frame(s) and write managed catalog tables, Delta and/or Iceberg.
+def dispatch_write(data, *, tier, origin, dataset, write_format, partition_keys, span_col=None,
+                   show_partitions=False, bounds=None, spark, args):
+    """Union the frame(s) and write ONE managed Delta table via helper_sparkdelta_io -
+    the same call providers.local makes for delta, only the table name differs.
 
-    # TARGET (Databricks only): managed tables in the tier LAYER SCHEMA (medallion
-    # convention = schema-per-layer), NOT alongside the landing Volume (that stays in
-    # --schema). source is folded into the table name ({ORIGIN}_) because the layer
-    # took the schema slot. delta keeps the bare name; iceberg gets the _iceberg suffix:
-    #   macroecons.t1.datagov_resale_flat_prices          (Delta)
-    #   macroecons.t1.datagov_resale_flat_prices_iceberg  (Iceberg)
-    # a managed table is NOT a Volume path - it lands under {catalog}.{schema} as a
-    # Table in UC's managed storage; read it back with spark.read.table(FQN), never by
-    # path. The write mechanics (create-first / replaceWhere-overwrite / align-down)
-    # live in helper_sparkcatalog_io.
-
-    `data`   : one Spark DataFrame, a list of them, or a dict of them (per-era, for
-               bronze - keys are ignored, only .values() is used) - unioned here.
-    `bounds` : (start_month, end_month) to overwrite an exact window (silver); None to
-               derive the window from the data itself (bronze - every era is a
-               contiguous month block, so the min..max span is exact).
-    `columns_contract` : unused here - unionByName handles column alignment.
-    `partition_keys` : list; databricks does not physically partition (managed tables get
-               Liquid Clustering). Only partition_keys[-1] is used - the column the
-               replaceWhere overwrite span is built on.
+    `data`     : one Spark DataFrame, a list of them, or a dict of them (per-era, for
+                 bronze - keys are ignored, only .values() is used) - unioned here.
+    `span_col` : required - the date column the overwrite window is built on.
+    `bounds`   : (start_month, end_month) = overwrite exactly that window (silver);
+                 None = the window is the data's own min..max span_col (bronze - every
+                 era is a contiguous month block). Built inside helper_sparkdelta_io.
+    `partition_keys` : unused here - these Delta tables are unpartitioned (as locally).
+                 Accepted for call-site parity with providers.local.dispatch_write.
     """
     from functools import reduce
-    from sparkutils.functions import F
+    import helper_sparkdelta_io
 
-    import helper_sparkcatalog_io
+    _require_delta(write_format)
+    if span_col is None:
+        raise SystemExit("databricks dispatch_write needs span_col= (the date column the overwrite window is built on)")
 
-    formats = _parse_formats(write_format)
-    frames  = list(data.values()) if isinstance(data, dict) else data if isinstance(data, list) else [data]
-    df_all  = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), frames)
+    frames = list(data.values()) if isinstance(data, dict) else data if isinstance(data, list) else [data]
+    df_all = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), frames)
+    print(f'[union] {len(frames)} frame(s) -> {df_all.count():,} rows')
 
-    period_col = partition_keys[-1]      # databricks doesn't physically partition; this is
-                                    # the column the replaceWhere overwrite span is built on
-    data_months = sorted(str(r[0]) for r in df_all.select(period_col).distinct().collect())
-    if bounds is not None:
+    # T1's own stated priority is never losing data - same defaults as local's writes.
+    helper_sparkdelta_io.write_partition_guarded(
+        df_all, spark, _fqn(args, tier, origin, dataset), span_col, bounds=bounds,
+        show_partitions=show_partitions, on_newcols='evolve', on_missingcols='pad_null')
+
+
+def read_tier(spark, args, *, tier, origin, dataset, fmt='delta', span_col=None, bounds=None):
+    """Read a tier's managed Delta table back as a Spark DataFrame. The caller passes
+    fmt = its own --write_format (read in the format written) - anything but delta is refused.
+
+    span_col + bounds : both or neither - reads just the window dispatch_write overwrites
+    (span_col BETWEEN {bounds[0]}-01 AND {bounds[1]}-01), same contract as providers.local.
+    """
+    import helper_sparkdelta_io
+
+    _require_delta(fmt)
+    if (span_col is None) != (bounds is None):
+        raise ValueError(f'read_tier: pass span_col AND bounds together, or neither - got span_col={span_col!r}, bounds={bounds!r}')
+
+    df = helper_sparkdelta_io.read(spark, _fqn(args, tier, origin, dataset))
+    if span_col is not None:
+        from sparkutils.functions import F
         lo, hi = f'{bounds[0]}-01', f'{bounds[1]}-01'
-    else:
-        lo, hi = data_months[0], data_months[-1]
-    n_out = df_all.count()
-    print(f'[union] {n_out:,} rows, {period_col} {lo}..{hi}')
-    span = F.expr(f"{period_col} >= DATE'{lo}' AND {period_col} <= DATE'{hi}'")
-
-    FQN = {'delta':   f'{args.catalog}.{tier}.{origin}_{dataset}',
-           'iceberg': f'{args.catalog}.{tier}.{origin}_{dataset}_iceberg'}
-
-    # NB: the first-ever write to each table defines its schema. run --eras all (or
-    # import_2017_onwards, which carries every column) FIRST - older eras are a strict
-    # column subset and only ever align DOWN in helper_sparkcatalog_io.
-    for fmt in ('delta', 'iceberg'):
-        if fmt in formats:
-            helper_sparkcatalog_io.create_or_overwrite(df_all, fqn=FQN[fmt], fmt=fmt, span=span, spark=spark)
-
-    return n_out, data_months
-
-
-def read_tier(spark, args, *, tier, origin, dataset, fmt='delta'):
-    """Read a tier table back as a Spark DataFrame. `fmt` defaults to 'delta' (the
-    canonical copy, bare name); pass fmt='iceberg' for the _iceberg twin. We still
-    write BOTH formats downstream regardless of which one we read here."""
-    import helper_sparkcatalog_io
-    suffix = '_iceberg' if fmt == 'iceberg' else ''
-    return helper_sparkcatalog_io.read(spark, f'{args.catalog}.{tier}.{origin}_{dataset}{suffix}')
+        print(f'[delta] read window {span_col} {lo}..{hi}')
+        df = df.filter(F.expr(f"{span_col} >= DATE'{lo}' AND {span_col} <= DATE'{hi}'"))
+    return df

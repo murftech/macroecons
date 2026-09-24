@@ -461,15 +461,15 @@ arrow_table = target.toArrow()
 era_dfs
 
 
-write_tier(era_dfs, tier=TIER, origin=ORIGIN, dataset=DATASET,
-           write_format=args.write_format, part_cols=[COMPUTED_PARTITION],
-           columns_contract=COLUMNS_CONTRACT, bounds=None, spark=spark, args=args)
+# write_tier(era_dfs, tier=TIER, origin=ORIGIN, dataset=DATASET,
+#            write_format=args.write_format, part_cols=[COMPUTED_PARTITION],
+#            columns_contract=COLUMNS_CONTRACT, bounds=None, spark=spark, args=args)
 
 Three things it tries to policy:
-1) ENVIRONMENT: DATABRICKS/local
-2) write_format
-3) forcing a catalog, schema, tablename definition
-4) is just simply what write_dataset does
+# 1) ENVIRONMENT: DATABRICKS/local
+# 2) write_format
+# 3) forcing a catalog, schema, tablename definition
+# 4) is just simply what write_dataset does
 
 # Othrs:
 
