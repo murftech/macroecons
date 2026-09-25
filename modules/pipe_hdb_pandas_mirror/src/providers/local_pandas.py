@@ -8,7 +8,7 @@ from pathlib import Path
 
 # ── REACH INTO THE ORIGINAL REPO — the one place the mirror does it ──────────
 # only the pandas-specific files live in this mirror; shared helpers (helper_pyarrow_io,
-# shared_schema_guards, helper_transit) are imported from pipe_hdb/src. APPENDED, not
+# shared_schema_guards_arrow, helper_transit) are imported from pipe_hdb/src. APPENDED, not
 # inserted: the mirror's own src stays first, so a same-named mirror file always wins.
 # __file__ = modules/pipe_hdb_pandas_mirror/src/providers/local_pandas.py -> parents[3] = modules/
 ORIGINAL_SRC = Path(__file__).resolve().parents[3] / 'pipe_hdb' / 'src'

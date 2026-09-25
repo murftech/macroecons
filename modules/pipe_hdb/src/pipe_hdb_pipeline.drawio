@@ -1,0 +1,166 @@
+<mxfile host="app.diagrams.net" agent="claude-code">
+  <diagram id="pipe_hdb_pipeline" name="pipe_hdb pipeline (draft)">
+    <mxGraphModel dx="1076" dy="647" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" parent="1" style="text;html=1;fontSize=20;fontStyle=1;align=left;verticalAlign=middle;" value="pipe_hdb local pipeline — first draft (t1 → t2, local only)" vertex="1">
+          <mxGeometry height="30" width="700" x="80" y="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="src" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" value="data.gov.sg API&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;5 CSV eras: 1990-1999, 2000-2012Feb, 2012Mar-2014, 2015-2016, 2017-onwards&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="300" x="390" y="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="stage0" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="0_land_csv.py&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;fetch_datagov_csv() per era, --mode update|backfill&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="300" x="390" y="180" as="geometry" />
+        </mxCell>
+
+        <mxCell id="landingL" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="Local FS landing dir&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;providers/local.py — get_landing_dir()&lt;br&gt;Root/MasterETL/{ENV}/lakehouse/landing/&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="300" x="390" y="290" as="geometry" />
+        </mxCell>
+
+        <mxCell id="stage1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="1_import_to_t1.py&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;reads landed CSVs per era&lt;br&gt;add_monthdate() -&gt; tx_monthdate, tag era&lt;/font&gt;" vertex="1">
+          <mxGeometry height="80" width="300" x="390" y="410" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 1 engine branch -->
+        <mxCell id="eng1Sail" parent="1" style="rounded=1;dashed=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="--spark_engine sail&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;PySail (default) — no JVM preprovision needed&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="230" x="230" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="eng1Java" parent="1" style="rounded=1;dashed=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="--spark_engine java&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;JVM Spark — preprovision_local_jvm_spark() must run before get_spark()&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="260" x="560" y="530" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 1 format branch -->
+        <mxCell id="fmt1Parquet" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" value="parquet&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;default, any engine&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="160" x="100" y="650" as="geometry" />
+        </mxCell>
+        <mxCell id="fmt1Iceberg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d0e0e3;strokeColor=#10739e;" value="iceberg&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;any engine&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="160" x="310" y="650" as="geometry" />
+        </mxCell>
+        <mxCell id="fmt1Delta" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="delta&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;java engine only&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="160" x="580" y="650" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="t1 (bronze)&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;datagov__resale_flat_prices — all eras unified, columns still string&lt;br&gt;dispatch_write(overwrite_keys=...): [era, tx_monthdate] for parquet/iceberg — tx_monthdate only for delta (LOCKED 2026-09-24)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="100" width="520" x="280" y="750" as="geometry" />
+        </mxCell>
+
+        <mxCell id="stage2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="2_stage_to_t2.py&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;read_tier(t1, --startMonth..--endMonth) — same --write_format script 1 wrote t1 in&lt;br&gt;cast types, derive tx_year/covid/age_sold/remaining_lease_sold/pretend_top_2025&lt;/font&gt;" vertex="1">
+          <mxGeometry height="90" width="300" x="390" y="900" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 2 engine branch -->
+        <mxCell id="eng2Sail" parent="1" style="rounded=1;dashed=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="--spark_engine sail&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;PySail (default)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="230" x="230" y="1030" as="geometry" />
+        </mxCell>
+        <mxCell id="eng2Java" parent="1" style="rounded=1;dashed=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="--spark_engine java&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;JVM Spark — preprovision_local_jvm_spark() first&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="260" x="560" y="1030" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 2 format branch -->
+        <mxCell id="fmt2Parquet" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" value="parquet&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;default, any engine&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="160" x="100" y="1150" as="geometry" />
+        </mxCell>
+        <mxCell id="fmt2Iceberg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d0e0e3;strokeColor=#10739e;" value="iceberg&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;any engine&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="160" x="310" y="1150" as="geometry" />
+        </mxCell>
+        <mxCell id="fmt2Delta" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="delta&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;java engine only&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="160" x="580" y="1150" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="t2 (silver)&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;tx_year, tx_monthdate, covid, flat_type, resale_price, age_sold,&lt;br&gt;remaining_lease_sold, pretend_top_2025, street_name, storey_range, town&lt;br&gt;dispatch_write(overwrite_keys='tx_monthdate') — same single column on all 3 formats, overwrite-by-presence (IN-list, not window)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="100" width="520" x="280" y="1250" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f0f0;strokeColor=#999999;align=left;verticalAlign=top;spacing=10;" value="Local-only notes&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;providers/local.py — ENV=dev|production selects&lt;br&gt;Root/MasterETL/{ENV}/lakehouse as the datalake root.&lt;br&gt;&lt;br&gt;--spark_engine and --write_format are parsed fresh&lt;br&gt;by EACH script (argparse) — the diagram shows this&lt;br&gt;branch twice because it's a real per-invocation choice,&lt;br&gt;not a value that carries over automatically. Convention&lt;br&gt;is to reuse the same --write_format for script 2 that&lt;br&gt;script 1 used, since t1 is read in that format.&lt;br&gt;&lt;br&gt;delta is reachable only via java: jars/catalogs load at&lt;br&gt;JVM boot, so preprovision_local_jvm_spark() must run&lt;br&gt;before get_spark() whenever write_format is iceberg or&lt;br&gt;delta AND engine is java.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="260" width="340" x="880" y="530" as="geometry" />
+        </mxCell>
+
+        <!-- Edges -->
+        <mxCell id="e1" edge="1" parent="1" source="src" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="stage0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="stage0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="landingL">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="landingL" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="stage1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e4" edge="1" parent="1" source="stage1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="eng1Sail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="stage1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="eng1Java">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e6" edge="1" parent="1" source="eng1Sail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt1Parquet">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="eng1Sail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt1Iceberg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="eng1Java" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt1Parquet">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="eng1Java" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt1Iceberg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="eng1Java" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt1Delta">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e11" edge="1" parent="1" source="fmt1Parquet" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="t1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="fmt1Iceberg" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="t1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="1" source="fmt1Delta" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="t1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e14" edge="1" parent="1" source="t1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" target="stage2" value="read_tier() — same format t1 was written in">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e15" edge="1" parent="1" source="stage2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="eng2Sail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" edge="1" parent="1" source="stage2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="eng2Java">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e17" edge="1" parent="1" source="eng2Sail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt2Parquet">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e18" edge="1" parent="1" source="eng2Sail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt2Iceberg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" edge="1" parent="1" source="eng2Java" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt2Parquet">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e20" edge="1" parent="1" source="eng2Java" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt2Iceberg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e21" edge="1" parent="1" source="eng2Java" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="fmt2Delta">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e22" edge="1" parent="1" source="fmt2Parquet" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="t2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e23" edge="1" parent="1" source="fmt2Iceberg" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="t2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e24" edge="1" parent="1" source="fmt2Delta" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" target="t2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

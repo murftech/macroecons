@@ -16,13 +16,15 @@ LAYER_SCHEMAS="t1 t2 t3"
 
 
 usage() {
-  echo "Usage: [login|catalog|schemas|volume|tables|all]"
+  echo "Usage: [login|catalog|schemas|volume|all]"
   echo "  login   - ensure authenticated to murftech7@gmail.com"
   echo "  catalog - CREATE CATALOG IF NOT EXISTS via the SQL API (REST create is rejected on Free Edition)"
   echo "  schemas - CREATE SCHEMA IF NOT EXISTS for: ${LANDING_SCHEMA} ${LAYER_SCHEMAS}"
   echo "  volume  - create the ${CATALOG_NAME}.${LANDING_SCHEMA}.${LANDING_VOLUME} MANAGED volume"
-  echo "  tables  - CREATE TABLE IF NOT EXISTS for the t1/t2 managed DELTA tables (explicit schema)"
-  echo "  all     - run login, catalog, schemas, volume, tables in sequence"
+  echo "  all     - run login, catalog, schemas, volume in sequence"
+  echo "TABLE-level provisioning (CREATE TABLE, ADD/DROP COLUMN, type changes) moved to"
+  echo "the sibling script databricks_table_management.sh (scope split 2026-09-25) -"
+  echo "this script only ever provisions catalog/schema/volume, never a table."
   exit 1
 }
 
@@ -32,8 +34,7 @@ main() {
   catalog) do_catalog ;;
   schemas) do_schemas ;;
   volume)  do_volume ;;
-  tables)  do_tables ;;
-  all)     do_login; do_catalog; do_schemas; do_volume; do_tables ;;
+  all)     do_login; do_catalog; do_schemas; do_volume ;;
   *)       usage ;;
   esac
 }
@@ -80,39 +81,6 @@ do_volume() {
     echo "Here: https://dbc-b01338b1-a584.cloud.databricks.com/explore/data/volumes/${CATALOG_NAME}/${LANDING_SCHEMA}/${LANDING_VOLUME}?o=7474643839559941"
 }
 
-
-
-# ── TABLES: explicit provisioning of the managed DELTA tables ────────────────
-# The write path (helper_sparkdelta_io.write_partition_guarded) REQUIRES the table to
-# exist - provisioning is a separate, deliberate step, never implicit inside a write.
-# Same schemas as local's src/0_run_deltalake_provision.py (keep the two in step):
-#   - unpartitioned, unclustered, no UniForm (plain Delta - see providers/databricks.py)
-#   - t1: remaining_lease is NOT listed - the 2015+ eras add it in flight
-#         (on_newcols='evolve' -> ALTER TABLE ADD COLUMNS), older eras null-pad it
-#   - NOT NULL on tx_monthdate + era in t1: Delta itself then refuses a null there
-# IF NOT EXISTS: re-running never touches an existing table (no evolve here - schema
-# changes on an existing table happen in the guarded write, or by hand).
-T1_DDL="CREATE TABLE IF NOT EXISTS ${CATALOG_NAME}.t1.datagov_resale_flat_prices (\
-month STRING, town STRING, flat_type STRING, block STRING, street_name STRING, \
-storey_range STRING, floor_area_sqm STRING, flat_model STRING, lease_commence_date STRING, \
-resale_price STRING, tx_monthdate DATE NOT NULL, era STRING NOT NULL) USING DELTA"
-
-T2_DDL="CREATE TABLE IF NOT EXISTS ${CATALOG_NAME}.t2.datagov_resale_flat_prices (\
-tx_year INT, tx_monthdate DATE, covid STRING, flat_type STRING, resale_price DOUBLE, \
-age_sold BIGINT, remaining_lease_sold BIGINT, pretend_top_2025 BIGINT, street_name STRING, \
-storey_range STRING, town STRING) USING DELTA"
-
-do_tables() {
-    warm_warehouse
-    run_sql "${T1_DDL}"
-    run_sql "${T2_DDL}"
-    echo "VALIDATE: format / partitioning of what now exists"
-    for t in t1 t2; do
-      databricks tables get "${CATALOG_NAME}.${t}.datagov_resale_flat_prices" -o json \
-        | jq -c '{full_name, data_source_format, table_type, columns: [.columns[] | "\(.name):\(.type_text)\(if .nullable == false then " NOT NULL" else "" end)"]}'
-    done
-    echo "Here: https://dbc-b01338b1-a584.cloud.databricks.com/explore/data/${CATALOG_NAME}?o=7474643839559941"
-}
 
 
 main "$@"

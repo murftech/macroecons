@@ -1,0 +1,33 @@
+# The ONLY files that ship to Databricks - a real allowlist, not a deny-list.
+# databricks_sync_exclude.txt is GENERATED from this + a walk of src/ (see
+# generate_exclude() in databricks_deploy.sh) - never hand-edit that file anymore.
+#
+# A new local-only file (a new provider, a new local-only helper, a study/wip
+# script) is EXCLUDED BY DEFAULT the moment it's created - nothing to remember,
+# nothing to keep in sync by hand. The trade-off, stated plainly: if a file THIS
+# list names starts importing something new, that new file needs adding here too,
+# or the Databricks job breaks on import (loud - ModuleNotFoundError - not silent).
+#
+# The real dependency graph the job tasks (land/import/stage) walk:
+# pipeline/{0_land_csv,1_import_to_t1,2_stage_to_t2}.py -> providers.databricks ->
+# lakehouse_io.helper_sparkdelta_io -> lakehouse_io.{shared_schema_guards,
+# shared_schema_guards_spark} ; reusable_functions.{helper_datagov,helper_transit}.
+# One path per line, relative to src/.
+
+pipeline/0_land_csv.py
+pipeline/1_import_to_t1.py
+pipeline/2_stage_to_t2.py
+
+providers/__init__.py
+providers/databricks.py
+
+lakehouse_io/__init__.py
+lakehouse_io/helper_sparkdelta_io.py
+lakehouse_io/shared_schema_guards.py
+lakehouse_io/shared_schema_guards_spark.py
+
+reusable_functions/__init__.py
+reusable_functions/helper_datagov.py
+reusable_functions/helper_transit.py
+
+requirements-databricks.txt

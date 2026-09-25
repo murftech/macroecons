@@ -26,6 +26,8 @@ dependencies = [
     "sparkutils",
     'runtime_env',
     "packagesmurf",
+    "lakehouse_io",
+    "databricks-sdk>=0.142.0",
 ]
 
 # sub: should we pull pysail to dev? Claude say depends on whether pysail can go on databricks.
@@ -50,6 +52,9 @@ delta = [
 
 [tool.uv.sources]
 # sparkutils = { path = "/Users/murftech/Dropbox/Datarepo/reusable_assets/helper_sparkutils", editable = true }
-runtime_env = { git = "https://github.com/murftech/helper_runtime_env.git" }
 sparkutils = { git = "https://github.com/murftech/helper_sparkutils.git" }
+runtime_env = { git = "https://github.com/murftech/helper_runtime_env.git" }
 packagesmurf = { path = "/Users/murftech/Root/Prod/packages", editable = true }
+# switch to the pushed repo with: helpers_sync.sh git lakehouse_io modules/pipe_hdb
+# lakehouse_io = { git = "https://github.com/murftech/helper_lakehouse_io.git" }
+lakehouse_io = { path = "/Users/murftech/Dropbox/Datarepo/reusable_assets/helper_lakehouse_io", editable = true }

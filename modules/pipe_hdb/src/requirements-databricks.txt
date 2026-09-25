@@ -3,5 +3,5 @@
 polars==1.44.1
 polars-runtime-32==1.44.1
     # via polars
-runtime-env @ git+https://github.com/murftech/helper_runtime_env.git@0493be5754abcc60fa69f08c9f9cfb79e573fa3d
+runtime-env @ git+https://github.com/murftech/helper_runtime_env.git@a70501782e1766f4521e6671ae5864ec44c0dd67
 sparkutils @ git+https://github.com/murftech/helper_sparkutils.git@b01acf1d450fcd703de55acce9ba471943db956e

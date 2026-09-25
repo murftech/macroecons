@@ -1,0 +1,129 @@
+<mxfile host="app.diagrams.net" modified="2026-09-24T00:00:00.000Z" agent="claude-code" version="24.0.0" type="device">
+  <diagram id="pipe_hdb_pipeline" name="pipe_hdb pipeline (draft)">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="1500" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="pipe_hdb pipeline — first draft" style="text;html=1;fontSize=20;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="80" y="20" width="500" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- External source -->
+        <mxCell id="src" value="data.gov.sg API&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;5 CSV eras: 1990-1999, 2000-2012Feb, 2012Mar-2014, 2015-2016, 2017-onwards&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="380" y="70" width="300" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 0 -->
+        <mxCell id="stage0" value="0_land_csv.py&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;fetch_datagov_csv() per era, --mode update|backfill&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="380" y="180" width="300" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Landing storage fork -->
+        <mxCell id="landingL" value="Local FS landing dir&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;providers/local.py&lt;br&gt;Root/MasterETL/{ENV}/lakehouse/landing/&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="100" y="300" width="260" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="landingD" value="Databricks UC Volume&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;providers/databricks.py&lt;br&gt;--catalog / --schema / --volume&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="700" y="300" width="260" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 1 -->
+        <mxCell id="stage1" value="1_import_to_t1.py&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Spark (sail|java) reads landed CSVs per era&lt;br&gt;add_monthdate() -&gt; tx_monthdate, tag era&lt;br&gt;dispatch_write()&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="380" y="410" width="300" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- t1 -->
+        <mxCell id="t1" value="t1 (bronze)&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;datagov__resale_flat_prices — all eras unified, columns still string&lt;br&gt;partition: [era, tx_monthdate] (delta on Databricks: tx_monthdate only)&lt;br&gt;format: parquet | iceberg (local, any engine) — delta (local java-only; Databricks, forced java, Delta+UniForm)&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="330" y="550" width="400" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 2 -->
+        <mxCell id="stage2" value="2_stage_to_t2.py&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;read_tier(t1, --startMonth..--endMonth), same format as write&lt;br&gt;cast types, derive tx_year/covid/age_sold/remaining_lease_sold/pretend_top_2025&lt;br&gt;dispatch_write(overwrite_keys='tx_monthdate')&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="380" y="690" width="300" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- t2 -->
+        <mxCell id="t2" value="t2 (silver)&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;tx_year, tx_monthdate, covid, flat_type, resale_price, age_sold,&lt;br&gt;remaining_lease_sold, pretend_top_2025, street_name, storey_range, town&lt;br&gt;partition: tx_monthdate — overwrite-by-presence (IN-list, not window)&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="330" y="830" width="400" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- Reporting fork -->
+        <mxCell id="reportA" value="2.a_report_firstbq.py&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;plotly charts off t2&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="140" y="960" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="reportB" value="2.b_explore_secondbq.py&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;ad-hoc exploration, no persisted output&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="960" width="260" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- HTML outputs -->
+        <mxCell id="htmlOut" value="output/*.html&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;1-firstbq-overlay.html, -facet.html, -fixedaxis.html&lt;br&gt;(container: output/, native: OneDrive DBMaster/.../pipe_hdb)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="120" y="1060" width="280" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 3 -->
+        <mxCell id="stage3" value="3_persist_outputs_wip.py&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;verify expected outputs exist + non-empty&lt;br&gt;(t1/t2 dir + the 3 html files)&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="120" y="1170" width="280" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Cloud sinks -->
+        <mxCell id="gcs" value="GCS bucket&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;if GCS_BUCKET env set&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1280" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="S3 bucket&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;if S3_BUCKET env set&lt;br&gt;.html uploaded twice (2nd pass sets ContentType) — known redundant loop&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="260" y="1280" width="220" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Legend -->
+        <mxCell id="legend" value="Provider dispatch pattern&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Every pipeline script branches ONCE, at import time:&lt;br&gt;  if IS_DATABRICKS: from providers.databricks import ...&lt;br&gt;  elif IS_LOCAL: from providers.local import ...&lt;br&gt;&lt;br&gt;Below that line, dispatch_write() / read_tier() / get_landing_dir()&lt;br&gt;are the SAME call in every script — the provider owns the fork.&lt;br&gt;&lt;br&gt;Local: ENV=dev|production, JVM Spark preprovisioned before&lt;br&gt;get_spark() for iceberg/delta (jars load at JVM boot only).&lt;br&gt;Databricks: engine forced to java, write_format forced to delta&lt;br&gt;(parquet/iceberg args raise via _require_delta()).&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;align=left;verticalAlign=top;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1170" width="360" height="220" as="geometry" />
+        </mxCell>
+
+        <!-- Edges -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="src" target="stage0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="IS_LOCAL" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="stage0" target="landingL">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="IS_DATABRICKS" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="stage0" target="landingD">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="landingL" target="stage1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="landingD" target="stage1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="stage1" target="t1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="read_tier() — same format t1 was written in" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="t1" target="stage2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="stage2" target="t2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="t2" target="reportA">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="t2" target="reportB">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="reportA" target="htmlOut">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="htmlOut" target="stage3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" value="if set" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;fontSize=10;" edge="1" parent="1" source="stage3" target="gcs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" value="if set" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;fontSize=10;" edge="1" parent="1" source="stage3" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

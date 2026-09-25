@@ -22,8 +22,7 @@ def get_lakehouse_root_from_env(env):
 def add_provider_args(parser):
     print('\n\n')
     added = [
-        parser.add_argument('--env', default=ENV, choices=('dev', 'production'),
-                             help="which lakehouse to target - defaults to the ENV env var (itself defaulting to 'dev')"),
+        parser.add_argument('--env', default=ENV, choices=('dev', 'production'), help="which lakehouse to target - defaults to the ENV env var (itself defaulting to 'dev')"),
         # parser.add_argument('--something_else', ...),
     ]
     print('args_added:', [a.option_strings[0] for a in added])
@@ -35,36 +34,18 @@ def provider_overwrite_spark_engine(requested):
     NOT a no-op like add_provider_args: the script needs a real engine string back."""
     return requested
 
-def preprovision_local_iceberg_spark(env):
-    """Kept for 2_stage_to_t2.py's existing call site - iceberg-only case of
-    preprovision_local_jvm_spark below."""
-    preprovision_local_jvm_spark(env, {'iceberg'})
-
-
-def preprovision_local_jvm_spark(env, formats):
-    """
-    Note: arg env is needed as the catalog path differs by environment
-    ONE builder for every JVM table format this run needs (iceberg and/or delta).
-
-    WHY ONE, not one function per format: jars/extensions/catalogs only load when the JVM
-    boots - the FIRST getOrCreate(). A second getOrCreate() adopts that running session and
-    silently ignores its own spark.jars.packages, so a separate delta call after the iceberg
-    one would leave delta missing. VERIFIED 2026-09-24: iceberg (own catalog) + delta
-    (DeltaCatalog as spark_catalog) coexist in one session.
-    """
+def preprovision_local_jvm_spark(env, write_format: str):
 
     from pyspark.sql import SparkSession
 
-    formats = set(formats)
-    unknown = formats - {'iceberg', 'delta'}
-    if unknown:
-        raise ValueError(f'preprovision_local_jvm_spark: no JVM setup for {sorted(unknown)}')
+    if write_format not in ('iceberg', 'delta'):
+        raise ValueError(f'preprovision_local_jvm_spark: no JVM setup for {write_format!r}')
 
     packages, extensions = [], []
     builder = SparkSession.builder
 
-    if 'iceberg' in formats:
-        from helper_pyiceberg_io import ICEBERG_CATALOG_NAME as MY_CATALOG
+    if write_format == 'iceberg':
+        from lakehouse_io.helper_pyiceberg_io import ICEBERG_CATALOG_NAME as MY_CATALOG
 
         iceberg_warehouse = get_lakehouse_root_from_env(env) / 'iceberg' / CATALOG_NAME
         catalog_db_path = iceberg_warehouse / '_icebergcatalog.db'
@@ -97,7 +78,7 @@ def preprovision_local_jvm_spark(env, formats):
             )
 
     # claude undigested
-    if 'delta' in formats:
+    if write_format == 'delta':
         # no warehouse/uri config at all: delta tables are addressed by path
         # (delta.`<abs path>`), there is no catalog to point at - see helper_deltalake_io.
         groupId = 'io.delta' # fixed string
@@ -114,7 +95,7 @@ def preprovision_local_jvm_spark(env, formats):
     if extensions:
         builder = builder.config('spark.sql.extensions', ','.join(extensions))
 
-    print(f'spins up a {sorted(formats)} embedded spark without assigning to the spark namespace, \
+    print(f'spins up a {write_format!r} embedded spark without assigning to the spark namespace, \
     which will be picked up later by getspark, to add further configs')
 
     builder.getOrCreate()
@@ -127,126 +108,88 @@ def get_landing_dir(args, origin, dataset):
     return str(get_lakehouse_root_from_env(args.env) / 'landing' / origin / dataset)
 
 
-
-_KNOWN_FORMATS = ('parquet', 'iceberg', 'delta')
-
-
-def _parse_format(write_format):
-    """ONE table format per run (decided 2026-09-24) - a comma list is refused, not split.
-    Two formats in one run are two separate commits with no rollback between them: if the
-    second fails the first has landed, and the copies silently disagree."""
-    fmt = write_format.strip()
-    if ',' in fmt:
-        raise Exception(f"one write format per run, got {write_format!r}. Run once per format instead. No write at all.")
-    if fmt not in _KNOWN_FORMATS:
-        raise Exception(f"invalid format {write_format!r}. Choose one of {_KNOWN_FORMATS}. No write at all.")
-    return fmt
-
-
-def dispatch_write(data, *, tier, origin, dataset, write_format, partition_keys, span_col=None, show_partitions=False,
-               on_newcols='evolve', on_missingcols='pad_null',
-               bounds=None, spark, args):
+def dispatch_write(
+    data, *, tier, origin, dataset, write_format: str, 
+    overwrite_keys: list, show_partitions=False,
+    on_newcols='evolve', on_missingcols='pad_null',
+    spark, args):
 
     '''
     1. Which ONE destination to write to (format x engine) - one format per run
     2. Handling more than one frame
-    3. Deciding what order to write frames in
-    4. Unifying table write addresses from tier, origin, dataset - all under
-       get_lakehouse_root_from_env(args.env) now, following the readme's Warehouse ROOT >
-       Catalog > Tier > Table convention for BOTH formats, not just iceberg.
+    3. Deciding what order to write dataframes in
+    4. Unifying table write addresses from tier, origin, dataset.
+    5. Vallidating overwrite key formats according to write_format
 
-    partition_keys : physical layout - used by parquet + iceberg only.
-    span_col       : the DATE column the delta replaceWhere window is built on - used by
-                     delta only (delta is unpartitioned, see helper_deltalake_io). Required
-                     when write_format='delta'. Kept apart from partition_keys on
-                     purpose: before, delta took partition_keys[-1] by position.
     '''
 
-    engine = args.spark_engine           # universal flag, same for every provider
+    # unzip provider branched args
+    engine = args.spark_engine
     lakehouse_root = get_lakehouse_root_from_env(args.env)   # provider-specific: local only has .env, databricks has .catalog instead
 
-    fmt = _parse_format(write_format)
-    if fmt == 'delta' and span_col is None:
-        raise Exception("delta needs span_col= (the date column its overwrite window is built on). No write at all.")
-    if fmt == 'delta' and engine != 'java':
-        raise Exception(f"delta is JVM-only locally for now (helper_sparkdelta_io) - got spark_engine={engine!r}. "
-                        f"The Sail path (helper_deltalake_io write) is not built yet. No write at all.")
-
-    frames  = list(data.values()) if isinstance(data, dict) else data if isinstance(data, list) else [data]
-
+    ##### write a lists of datadataframes OR just one dataframe ###
+    dataframes  = list(data.values()) if isinstance(data, dict) else data if isinstance(data, list) else [data]
+    
     # widest schema first - the frame with the most columns establishes the
-    # destination's full width on write #1, so every later (narrower) frame
-    # just needs on_missingcols='pad_null'.
-    # len(df.columns) - schema only; the old df.toArrow() collected every era just to count columns.
-    frames = sorted(frames, key=lambda df: -len(df.columns))
+    # destination's full width on write #1, so every later (narrower) frame just needs on_missingcols='pad_null'.
+    dataframes = sorted(dataframes, key=lambda df: -len(df.columns))
 
-    # ---------- resolve the ONE destination ----------
+    ############ parquet ##############
 
-    if fmt == 'parquet':
-        import helper_pyarrow_io
+    if write_format == 'parquet':
+        from lakehouse_io import helper_pyarrow_io
         PARQUET_DIR = str(lakehouse_root / 'hive' / CATALOG_NAME / tier / f'{origin}__{dataset}')
-
-    elif fmt == 'iceberg' and engine == 'sail':
-        import helper_pyiceberg_io
-        ICEBERG_WAREHOUSE = lakehouse_root / 'iceberg' / CATALOG_NAME   # the Catalog layer lives IN the warehouse path itself for iceberg
-        ICEBERG_NAMESPACE = tier
-        ICEBERG_TBL_NAME  = f'{origin}__{dataset}'
-        ICEBERG_FQN       = f'{ICEBERG_NAMESPACE}.{ICEBERG_TBL_NAME}'
-        catalog = helper_pyiceberg_io.getOrCreate_catalog(ICEBERG_WAREHOUSE)
-
-    elif fmt == 'iceberg' and engine == 'java':
-        import helper_sparkiceberg_io
-        from helper_pyiceberg_io import ICEBERG_CATALOG_NAME
-        ICEBERG_FQN = f'{ICEBERG_CATALOG_NAME}.{tier}.{origin}__{dataset}'
-
-    elif fmt == 'delta':          # engine == 'java' guaranteed above
-        import helper_sparkdelta_io
-        # addressed by path, no catalog registration - see helper_deltalake_io docstring
-        DELTA_FQN = f"delta.`{lakehouse_root / 'delta' / CATALOG_NAME / tier / f'{origin}__{dataset}'}`"
-
-    # ---------- write each frame to that ONE destination ----------
-
-    for df in frames:
-
-        if fmt == 'parquet':
+        
+        for df in dataframes:
             helper_pyarrow_io.write_partition_guarded(
-                df.toArrow(), PARQUET_DIR, partition_keys,
+                df.toArrow(), PARQUET_DIR,  partition_keys = overwrite_keys,
                 on_newcols=on_newcols, on_missingcols=on_missingcols, show_partitions=show_partitions)
-            print(f'DONE:  parquet -> {PARQUET_DIR}')
 
-        elif fmt == 'iceberg' and engine == 'sail':
-            helper_pyiceberg_io.write_partition_guarded(
-                df.toArrow(), catalog, ICEBERG_FQN, partition_keys,
+    ############ iceberg ##############
+    if write_format == 'iceberg' and engine == 'sail':
+            from lakehouse_io import helper_pyiceberg_io
+            ICEBERG_WAREHOUSE = lakehouse_root / 'iceberg' / CATALOG_NAME   # the Catalog layer lives IN the warehouse path itself for iceberg
+            ICEBERG_NAMESPACE = tier
+            ICEBERG_TBL_NAME  = f'{origin}__{dataset}'
+            ICEBERG_FQN       = f'{ICEBERG_NAMESPACE}.{ICEBERG_TBL_NAME}'
+            catalog = helper_pyiceberg_io.getOrCreate_catalog(ICEBERG_WAREHOUSE)
+
+            for df in dataframes:
+
+                helper_pyiceberg_io.write_partition_guarded(
+                df.toArrow(), catalog, ICEBERG_FQN, partition_keys = overwrite_keys,
                 on_newcols=on_newcols, on_missingcols=on_missingcols, show_partitions=show_partitions)
-            print(f'DONE:  iceberg -> {ICEBERG_FQN}')
 
-        elif fmt == 'iceberg' and engine == 'java':
-            helper_sparkiceberg_io.write_partition_guarded(
-                df, spark, ICEBERG_FQN, partition_keys,
-                on_newcols=on_newcols, on_missingcols=on_missingcols, show_partitions=show_partitions)
-            print(f'DONE:  iceberg -> {ICEBERG_FQN}')
+    if write_format == 'iceberg' and engine == 'java':
+            from lakehouse_io import helper_sparkiceberg_io
+            from lakehouse_io.helper_pyiceberg_io import ICEBERG_CATALOG_NAME
+            ICEBERG_FQN = f'{ICEBERG_CATALOG_NAME}.{tier}.{origin}__{dataset}'
 
-        elif fmt == 'delta':
-            # the window (bounds, else this frame's own min..max span_col) is built inside
-            # helper_sparkdelta_io.build_span, at write time - same call as databricks.py makes
-            helper_sparkdelta_io.write_partition_guarded(
-                df, spark, DELTA_FQN, span_col, bounds=bounds,
-                on_newcols=on_newcols, on_missingcols=on_missingcols, show_partitions=show_partitions)
-            # no DONE print here - helper_sparkdelta_io prints its own (with the write mode)
+            for df in dataframes:
 
-        # if fmt == 'delta' and engine == 'sail':
-        #     # defer
-        #     helper_deltalake_io.write_partition_guarded(
-        #         df.toArrow(), catalog, ICEBERG_FQN, partition_keys,
-        #         on_newcols=on_newcols, on_missingcols=on_missingcols, show_partitions=show_partitions)
-        #     print(f'DONE:  iceberg -> {ICEBERG_FQN}')
+                helper_sparkiceberg_io.write_partition_guarded(
+                    df, spark, ICEBERG_FQN, partition_keys = overwrite_keys,
+                    on_newcols=on_newcols, on_missingcols=on_missingcols, show_partitions=show_partitions)
+
+    ############ delta ##############
+    if write_format == 'delta' and engine == 'java':
+            from lakehouse_io import helper_sparkdelta_io
+            # addressed by path, no catalog registration - see helper_deltalake_io docstring
+            DELTA_FQN = f"delta.`{lakehouse_root / 'delta' / CATALOG_NAME / tier / f'{origin}__{dataset}'}`"
+
+            for df in dataframes:
+
+                helper_sparkdelta_io.write_span_guarded(
+                    df, spark, DELTA_FQN, span_key = overwrite_keys,
+                    on_newcols=on_newcols, on_missingcols=on_missingcols, show_partitions=show_partitions)
 
 
 
-def read_tier(spark, args, *, tier, origin, dataset, fmt='parquet', span_col=None, bounds=None):
-    """Read a persisted tier back as a Spark DataFrame. `fmt` defaults to 'parquet'
+
+def togg_read(spark, args, *, tier, origin, dataset, write_format='parquet', span_col=None, bounds=None):
+    """Read a persisted tier back as a Spark DataFrame. `write_format` defaults to 'parquet'
     (the canonical local copy, and the only one Sail can read directly); pass
-    fmt='iceberg' to read the pyiceberg copy instead (scan -> arrow -> createDataFrame,
+    write_format='iceberg' to read the pyiceberg copy instead (scan -> arrow -> createDataFrame,
     also Sail-safe). `args.env` selects dev vs production, same as dispatch_write.
 
     span_col + bounds : delta only, both or neither. Reads just the window
@@ -254,27 +197,28 @@ def read_tier(spark, args, *, tier, origin, dataset, fmt='parquet', span_col=Non
     overwrites), pushed down to delta's file stats. Neither = the whole table.
     """
     if (span_col is None) != (bounds is None):
-        raise ValueError(f'read_tier: pass span_col AND bounds together, or neither - got span_col={span_col!r}, bounds={bounds!r}')
-    if span_col is not None and fmt != 'delta':
-        raise NotImplementedError(f'read_tier: a span_col/bounds window is delta-only for now, got fmt={fmt!r}')
+        raise ValueError(f'togg_read: pass span_col AND bounds together, or neither - got span_col={span_col!r}, bounds={bounds!r}')
+    if span_col is not None and write_format != 'delta':
+        raise NotImplementedError(f'togg_read: a span_col/bounds window is delta-only for now, got write_format={write_format!r}')
 
-    import helper_pyarrow_io
-    import helper_pyiceberg_io
+    from lakehouse_io import helper_pyarrow_io
+    from lakehouse_io import helper_pyiceberg_io
 
     lakehouse_root = get_lakehouse_root_from_env(args.env)
 
-    if fmt == 'parquet':
+    if write_format == 'parquet':
         parquet_dir = str(lakehouse_root / 'hive' / CATALOG_NAME / tier / f'{origin}__{dataset}')
         return helper_pyarrow_io.read(spark, parquet_dir)
-    if fmt == 'iceberg':
+
+    if write_format == 'iceberg':
         iceberg_catalog = helper_pyiceberg_io.getOrCreate_catalog(lakehouse_root / 'iceberg' / CATALOG_NAME)
         return helper_pyiceberg_io.sail_read_iceberg(
             spark, iceberg_catalog, table_fqn=f'{tier}.{origin}__{dataset}')
 
     # claude undigested
-    if fmt == 'delta':
+    if write_format == 'delta':
         # JVM only (needs DeltaCatalog from preprovision_local_jvm_spark); Sail read not built yet
-        import helper_sparkdelta_io
+        from lakehouse_io import helper_sparkdelta_io
         df = helper_sparkdelta_io.read(
             spark, f"delta.`{lakehouse_root / 'delta' / CATALOG_NAME / tier / f'{origin}__{dataset}'}`")
         if span_col is not None:
@@ -284,4 +228,4 @@ def read_tier(spark, args, *, tier, origin, dataset, fmt='parquet', span_col=Non
             df = df.filter(F.expr(f"{span_col} >= DATE'{lo}' AND {span_col} <= DATE'{hi}'"))
         return df
 
-    raise SystemExit(f"read_tier fmt must be 'parquet', 'iceberg' or 'delta', got {fmt!r}")
+    raise SystemExit(f"togg_read write_format must be 'parquet', 'iceberg' or 'delta', got {write_format!r}")
